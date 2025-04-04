@@ -1,0 +1,97 @@
+{
+    "42174": {
+        "nombre": "Pedido 42174",
+        "cantidad": 1,
+        "fecha_entrega": 25,
+        "procesos": [
+            ["Dibujo", 1, "En carpeta", "654321", ""]
+        ]
+    },
+    "22174": {
+        "nombre": "Pedido 22174",
+        "cantidad": 1,
+        "fecha_entrega": 10,
+        "procesos": [
+            ["Dibujo", 1, "En carpeta", "284020", ""],
+            ["Impresión", 1, "Digital", "284019", ""],
+            ["Corte", 1, "Acabado", "284205", ""],
+            ["Corte", 1, "Acabado", "284019", ""],
+            ["Mecanizado", 1, "Plotter", "284020", ""],
+            ["Laminado", 1, "T.Papel Normal", "284020", ""],
+            ["Corte", 1, "Acabado", "284020", ""],
+            ["Embalaje", 1, "-", "284020", ""]
+        ]
+    },
+    "99902": {
+        "nombre": "Pedido 99902",
+        "cantidad": 1,
+        "fecha_entrega": 2,
+        "procesos": [
+            ["Impresión", 1, "Serigrafía", "534870", ""]
+        ]
+    },
+    "22023": {
+        "nombre": "Pedido 22023",
+        "cantidad": 1,
+        "fecha_entrega": 3,
+        "procesos": [
+            ["Impresión", 1, "Serigrafía", "282141", ""]
+        ]
+    },
+    "10467": {
+        "nombre": "Pedido 10467",
+        "cantidad": 1,
+        "fecha_entrega": 3,
+        "procesos": [
+            ["Dibujo", 1, "En carpeta", "534270", ""]
+        ]
+    },
+    "99999": {
+        "nombre": "Pedido 99999",
+        "cantidad": 1,
+        "fecha_entrega": 4,
+        "procesos": [
+            ["Embalaje", 1, "-", "522750", ""]
+        ]
+    },
+    "99998": {
+        "nombre": "Pedido 99998",
+        "cantidad": 1,
+        "fecha_entrega": 4,
+        "procesos": [
+            ["Embalaje", 1, "-", "522751", ""]
+        ]
+    },
+    "99997": {
+        "nombre": "Pedido 99997",
+        "cantidad": 1,
+        "fecha_entrega": 4,
+        "procesos": [
+            ["Corte", 1, "Acabado", "522752", ""]
+        ]
+    },
+    "88888": {
+        "nombre": "Pedido 88888",
+        "cantidad": 1,
+        "fecha_entrega": 4,
+        "procesos": [
+            ["Impresión", 1, "Digital", "142752", ""]
+        ]
+    },
+    "999997": {
+        "nombre": "Pedido 999997",
+        "cantidad": 1,
+        "fecha_entrega": 5,
+        "procesos": [
+            ["Mecanizado", 1, "Burbuja", "522452", ""]
+        ]
+    },
+    "99990": {
+        "nombre": "Pedido 99990",
+        "cantidad": 1,
+        "fecha_entrega": 6,
+        "procesos": [
+            ["Embalaje", 1, "-", "534007", ""]
+        ]
+    }
+} 
