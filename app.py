@@ -50,6 +50,9 @@ fecha_actual = datetime(2024, 9, 26)
 
 # Sidebar para entrada de datos
 with st.sidebar:
+
+    st.image("logo-sergar.png")
+
     st.header("Configuración de Pedidos")
     
     # Opción para cargar pedidos desde JSON
@@ -414,11 +417,29 @@ if plan:
     st.subheader("Métricas de Prioridad")
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Pedidos Críticos", len(df[df['Prioridad'] > df['Prioridad'].median()]))
+        pedidos_criticos = df[df['Prioridad'] > df['Prioridad'].median()]
+        st.metric("Pedidos Críticos", len(pedidos_criticos))
+
     with col2:
-        st.metric("Procesos Fuera de Plazo", len(df[df['Cumplimiento'] == 'Fuera de Plazo']))
+        pedidos_fuera_plazo = df[df['Cumplimiento'] == 'Fuera de Plazo']
+        st.metric("Procesos Fuera de Plazo", len(pedidos_fuera_plazo))
+
     with col3:
-        st.metric("Procesos en Riesgo", len(df[df['Fecha Fin'] > df['Fecha Límite Interna']]))
+        pedidos_riesgo = df[df['Fecha Fin'] > df['Fecha Límite Interna']]
+        st.metric("Procesos en Riesgo", len(pedidos_riesgo))
+
+    #Listado de pedidos con problemas
+    st.subheader("📋 Listado de Pedidos")
+
+    # Mostrar cada lista de pedidos con `st.expander()` para ahorrar espacio
+    with st.expander("Pedidos Críticos"):
+        st.dataframe(pedidos_criticos, hide_index=True)
+
+    with st.expander("Procesos Fuera de Plazo"):
+        st.dataframe(pedidos_fuera_plazo, hide_index=True)
+
+    with st.expander("Procesos en Riesgo"):
+        st.dataframe(pedidos_riesgo, hide_index=True)
 
     # Añadir gráfico de prioridades
     st.subheader("Distribución de Prioridades")
