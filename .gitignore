@@ -1,0 +1,77 @@
+# Entornos virtuales de Python
+venv/
+venv_sergar/
+env/
+ENV/
+.env/
+.venv/
+env.bak/
+venv.bak/
+
+# Archivos de caché de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Archivos de configuración local
+*.local
+.env
+.env.local
+.env.*.local
+
+# Archivos de IDE y editores
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Archivos de Streamlit
+.streamlit/
+
+# Archivos de Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Archivos de caché y temporales
+*.log
+*.tmp
+*.temp
+.cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Archivos de datos grandes
+*.csv
+*.xlsx
+*.xls
+*.db
+*.sqlite
+*.sqlite3
+
+# Archivos de documentación
+docs/_build/
+site/
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db 
