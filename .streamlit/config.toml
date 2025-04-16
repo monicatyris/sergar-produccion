@@ -1,0 +1,6 @@
+[theme]
+primaryColor="#0066CC"           # Azul corporativo de Grúas Jordán
+backgroundColor="#FFFFFF"        # Fondo blanco para limpieza visual
+secondaryBackgroundColor="#E8F1FA" # Color secundario suave que complementa el azul
+textColor="#212529"              # Texto oscuro para buena legibilidad
+font="sans serif" 

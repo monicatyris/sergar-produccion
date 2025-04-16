@@ -1,0 +1,22 @@
+{
+    "1": {
+        "nombre": "Placa aluminio de 60x75x100",
+        "cantidad": 110,
+        "fecha_entrega": 24,
+        "procesos": [
+            ["Dibujo", 3.648],
+            ["Impresión", 3.648],
+            ["Taladro", 1.824]
+        ]
+    },
+    "2": {
+        "nombre": "Caja de madera 40x50x60",
+        "cantidad": 50,
+        "fecha_entrega": 30,
+        "procesos": [
+            ["Dibujo", 2],
+            ["Corte", 4],
+            ["Barniz", 1]
+        ]
+    }
+}
