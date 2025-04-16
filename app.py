@@ -6,25 +6,80 @@ import json
 from ortools_sergar import planificar_produccion
 import plotly.graph_objects as go
 
-# Configuración de la página (debe ser el primer comando de Streamlit)
+# Configuración de la página para layout responsive
 st.set_page_config(
     page_title="Panel de Producción",
     page_icon="📊",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Añadir estilos CSS después de la configuración de la página
+# Estilos CSS para mejorar la visualización
 st.markdown("""
     <style>
-        .stButton>button {
-            background-color: transparent;
-            border: none;
-            color: #666;
-            padding: 0;
-            font-size: 1.2em;
+        /* Eliminar barras de desplazamiento */
+        .main .block-container {
+            padding-top: 0.5rem;
+            padding-bottom: 0.5rem;
+            padding-left: 1rem;
+            padding-right: 1rem;
+            max-width: 100%;
         }
-        .stButton>button:hover {
-            color: #333;
+        
+        /* Ajustar sidebar */
+        .css-1d391kg {
+            padding-top: 0.5rem;
+            padding-bottom: 0.5rem;
+        }
+        
+        /* Ajustar altura de elementos */
+        .stDataFrame {
+            width: 100%;
+            height: calc(100vh - 500px);
+            overflow: auto;
+        }
+        
+        /* Ajustar altura del gráfico Gantt */
+        .element-container:has(> .stPlotlyChart) {
+            height: calc(100vh - 300px);
+        }
+        
+        /* Ajustar espaciado entre elementos */
+        .element-container {
+            margin-bottom: 0.25rem;
+        }
+        
+        /* Ajustar tamaño de fuente */
+        .stMarkdown h3 {
+            margin-top: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        /* Ajustar botones y controles */
+        .stButton > button {
+            width: 100%;
+        }
+        
+        /* Ajustar multiselect */
+        .stMultiSelect {
+            max-height: 100px;
+        }
+        
+        /* Ocultar barras de desplazamiento pero mantener funcionalidad */
+        ::-webkit-scrollbar {
+            display: none;
+        }
+        
+        /* Ajustar tabla de datos */
+        .dataframe {
+            font-size: 0.9em;
+        }
+        
+        /* Ajustar contenedor principal */
+        .main .block-container {
+            max-width: 100%;
+            padding-left: 1rem;
+            padding-right: 1rem;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -68,7 +123,6 @@ with st.sidebar:
             for proceso_info in data['procesos']:
                 proceso = proceso_info[0]
                 duracion = proceso_info[1]
-                # Seleccionar un subproceso aleatorio de los disponibles para el proceso
                 subproceso = SUBPROCESOS_VALIDOS.get(proceso, ['Sin Especificar'])[0]
                 ot = f"OT-{pedido}-{len(procesos_completos)+1}"
                 operario = "Por Asignar"
@@ -124,11 +178,6 @@ if plan:
         else:
             return 'En Plazo'
 
-    # Modificar las fechas del ejemplo específico antes de la planificación
-    if '42174' in pedidos:
-        # Establecer la fecha límite para el pedido 42174 (25/09/2024)
-        pedidos['42174']['fecha_entrega'] = -1  # -1 días desde la fecha de inicio (26/09/2024)
-
     df['Estado'] = df.apply(determinar_estado, axis=1)
     df['Cumplimiento'] = df.apply(determinar_cumplimiento, axis=1)
     
@@ -147,16 +196,12 @@ if plan:
     with st.sidebar:
         st.subheader("Filtrar")
         
-        # Botón para limpiar filtros con ícono
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            if st.button("🗑️"):
-                for key in ['pedidos_filtro', 'procesos_filtro', 'subprocesos_filtro', 'estados_filtro', 'cumplimiento_filtro']:
-                    if key in st.session_state:
-                        st.session_state[key] = []
-                st.rerun()
-        with col2:
-            st.markdown("Limpiar filtros", help="Elimina todos los filtros aplicados")
+        # Botón para limpiar filtros
+        if st.button("🗑️ Limpiar filtros", help="Elimina todos los filtros aplicados"):
+            for key in ['pedidos_filtro', 'procesos_filtro', 'subprocesos_filtro', 'estados_filtro', 'cumplimiento_filtro']:
+                if key in st.session_state:
+                    st.session_state[key] = []
+            st.rerun()
         
         # Inicializar filtros en session_state si no existen
         for key in ['pedidos_filtro', 'procesos_filtro', 'subprocesos_filtro', 'estados_filtro', 'cumplimiento_filtro']:
@@ -317,7 +362,7 @@ if plan:
     # Mostrar gráfico
     st.plotly_chart(fig, use_container_width=True)
     
-    # Mostrar tabla de detalles filtrada con estilos
+    # Mostrar tabla de detalles filtrada
     st.markdown("### Detalles por pedido")
     
     # Reordenar y seleccionar columnas
@@ -330,155 +375,5 @@ if plan:
     
     # Mostrar tabla sin estilos y sin índices
     st.dataframe(df_filtrado, hide_index=True)
-    
-    # Métricas principales
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Fecha de Finalización", (fecha_inicio + timedelta(days=makespan)).strftime("%d/%m/%Y"))
-    with col2:
-        st.metric("Número de Pedidos", len(df_filtrado['Pedido'].unique()))
-    with col3:
-        st.metric("Total de Operaciones", len(df_filtrado))
-    
-    # Resumen por proceso
-    st.subheader("Resumen por Proceso")
-    proceso_tiempos = df_filtrado.groupby('Proceso')['Duración (días)'].sum()
-    st.bar_chart(proceso_tiempos)
-    
-    # Instrucciones para operarios
-    st.subheader("📋 Instrucciones para Operarios")
-    for _, row in df_filtrado.iterrows():
-        estado_emoji = {
-            'Fuera de Plazo': '⚠️',
-            'En Plazo': '✅',
-            'Finalizado': '✅',
-            'En Proceso': '🔄',
-            'Listo para Activar': '🟢',
-            'Pendiente': '⏳'
-        }
-        
-        # Obtener la fecha límite del pedido
-        fecha_limite = fecha_inicio + timedelta(days=pedidos[str(row['Pedido'])]['fecha_entrega'])
-        
-        st.markdown(f"""
-        **Pedido {row['Pedido']} - {row['Proceso']}** {estado_emoji[row['Cumplimiento']]}
-        - Subproceso: {row['Subproceso']}
-        - Número de OT: {row['Número de OT']}
-        - Operario: {row['Operario']}
-        - Fecha de Inicio: {row['Fecha Inicio'].strftime('%d/%m/%Y')}
-        - Fecha de Finalización: {row['Fecha Fin'].strftime('%d/%m/%Y')}
-        - Fecha Límite: {fecha_limite.strftime('%d/%m/%Y')}
-        - Duración: {row['Duración (días)']} días
-        - Estado: {row['Estado']}
-        - Cumplimiento: {row['Cumplimiento']}
-        """)
-
-    # Definir costes relativos de los procesos
-    costes_procesos = {
-        'Dibujo': 1.0,      # Coste base
-        'Impresión': 1.2,   # 20% más costoso que dibujo
-        'Serigrafía': 1.5,  # 50% más costoso que dibujo
-        'Taladro': 1.3,     # 30% más costoso que dibujo
-        'Corte': 1.4,       # 40% más costoso que dibujo
-        'Resina': 2.0,      # 100% más costoso que dibujo (proceso externo)
-        'Grabado': 1.1,     # 10% más costoso que dibujo
-        'Barniz': 1.1,      # 10% más costoso que dibujo
-        'Embalaje': 0.8     # 20% menos costoso que dibujo
-    }
-
-    # Función para calcular la prioridad de un pedido
-    def calcular_prioridad(pedido, data):
-        try:
-            # Factor de urgencia (basado en días restantes hasta la fecha de entrega)
-            dias_restantes = max(1, data['fecha_entrega'])  # Asegurar que no sea cero
-            factor_urgencia = 1 / dias_restantes
-            
-            # Factor de coste (basado en cantidad y costes de procesos)
-            coste_total = 0
-            for proceso_info in data['procesos']:
-                proceso = proceso_info[0]  # El nombre del proceso es el primer elemento
-                duracion = proceso_info[1]  # La duración es el segundo elemento
-                if proceso in costes_procesos:
-                    coste_total += costes_procesos[proceso] * duracion
-            
-            factor_coste = data['cantidad'] * coste_total
-            
-            # Factor de complejidad (basado en número de procesos)
-            factor_complejidad = len(data['procesos'])
-            
-            # Factor de procesos críticos (Resina, Grabado, Barniz)
-            procesos_criticos = sum(1 for proceso_info in data['procesos'] 
-                                 if proceso_info[0] in ['Resina', 'Grabado', 'Barniz'])
-            factor_criticos = 1 + (procesos_criticos * 0.2)  # 20% más por cada proceso crítico
-            
-            # Cálculo de la prioridad final
-            prioridad = factor_urgencia * factor_coste * factor_complejidad * factor_criticos
-            return prioridad
-        except Exception as e:
-            print(f"Error al calcular prioridad para pedido {pedido}: {str(e)}")
-            return 0  # Retornar 0 en caso de error
-
-    # Calcular prioridades para todos los pedidos
-    prioridades = {pedido: calcular_prioridad(pedido, data) for pedido, data in pedidos.items()}
-
-    # Función para calcular fechas límite internas
-    def calcular_fechas_limite_internas(pedido, data):
-        try:
-            fecha_entrega = fecha_inicio + timedelta(days=data['fecha_entrega'])
-            procesos = data['procesos']
-            total_dias = sum(proceso_info[1] for proceso_info in procesos)  # La duración es el segundo elemento
-            
-            fechas_limite = {}
-            dias_acumulados = 0
-            
-            for i, proceso_info in enumerate(procesos):
-                proceso = proceso_info[0]  # El nombre del proceso es el primer elemento
-                duracion = proceso_info[1]  # La duración es el segundo elemento
-                
-                # Distribuir el tiempo restante proporcionalmente
-                dias_asignados = (duracion / total_dias) * data['fecha_entrega']
-                fecha_limite = fecha_inicio + timedelta(days=int(dias_acumulados + dias_asignados))
-                fechas_limite[i] = fecha_limite
-                dias_acumulados += dias_asignados
-            
-            return fechas_limite
-        except Exception as e:
-            print(f"Error al calcular fechas límite internas para pedido {pedido}: {str(e)}")
-            return {}  # Retornar diccionario vacío en caso de error
-
-    # Calcular fechas límite internas para todos los pedidos
-    fechas_limite_internas = {
-        pedido: calcular_fechas_limite_internas(pedido, data) 
-        for pedido, data in pedidos.items()
-    }
-
-    # Añadir prioridad y fechas límite internas al DataFrame
-    df['Prioridad'] = df['Pedido'].apply(lambda x: prioridades[str(x)])
-    df['Fecha Límite Interna'] = df.apply(
-        lambda row: fechas_limite_internas[str(row['Pedido'])][int(row['Secuencia'].split()[1]) - 1], 
-        axis=1
-    )
-
-    # Reordenar columnas para mejor visualización
-    columnas_ordenadas = [
-        'Estado', 'Cumplimiento', 'Prioridad', 'Fecha Inicio', 'Fecha Fin', 
-        'Fecha Límite Interna', 'Pedido', 'Nombre', 'Proceso', 'Subproceso', 
-        'Secuencia', 'Duración (días)', 'Número de OT', 'Operario'
-    ]
-    df = df[columnas_ordenadas]
-
-    # Añadir métricas de prioridad
-    st.subheader("Métricas de Prioridad")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Pedidos Críticos", len(df[df['Prioridad'] > df['Prioridad'].median()]))
-    with col2:
-        st.metric("Procesos Fuera de Plazo", len(df[df['Cumplimiento'] == 'Fuera de Plazo']))
-    with col3:
-        st.metric("Procesos en Riesgo", len(df[df['Fecha Fin'] > df['Fecha Límite Interna']]))
-
-    # Añadir gráfico de prioridades
-    st.subheader("Distribución de Prioridades")
-    st.bar_chart(df.groupby('Pedido')['Prioridad'].mean().sort_values(ascending=False))
 else:
     st.error("No se pudo encontrar una solución óptima para los pedidos actuales") 
