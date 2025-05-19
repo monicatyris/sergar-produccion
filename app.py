@@ -6,6 +6,8 @@ import json
 from ortools_sergar import planificar_produccion
 import plotly.graph_objects as go
 
+from processing.transformations import process_data
+
 # Configuración de la página (debe ser el primer comando de Streamlit)
 st.set_page_config(
     page_title="Panel de Producción",
@@ -46,6 +48,17 @@ with st.sidebar:
     # Opción para cargar pedidos desde JSON
     st.subheader("Cargar Pedidos")
     uploaded_file = st.file_uploader("Cargar archivo JSON de pedidos", type=['json'])
+
+     # Opción para cargar pedidos desde Excel
+    st.subheader("Cargar Pedidos en Exel")
+    uploaded_excel_file = st.file_uploader("Cargar archivo Excel de pedidos", type=['xlsx'])
+    if uploaded_excel_file is not None:
+        try:
+            df = pd.read_excel(uploaded_excel_file, decimal=",", date_format="%d/%m/%Y")
+            orders_list = process_data(df)
+            st.success("Archivo Excel cargado correctamente")
+        except Exception as e:
+            st.error(f"Error al cargar el archivo Excel: {str(e)}")
     
     # Definir lista de subprocesos válidos
     SUBPROCESOS_VALIDOS = {
