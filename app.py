@@ -92,19 +92,6 @@ try:
             'IT07_Can_romo': 'Canteado',
             'IT07_Numerado': 'Numerado',
             'IT08_Embalaje': 'Embalaje',
-            # Añadir mapeo inverso para nombres sin IT
-            'Dibujo': 'Dibujo',
-            'Pantalla': 'Pantalla',
-            'Corte': 'Corte',
-            'Impresión': 'Impresión',
-            'Grabado': 'Grabado',
-            'Adhesivo': 'Adhesivo',
-            'Laminado': 'Laminado',
-            'Mecanizado': 'Mecanizado',
-            'Taladro': 'Taladro',
-            'Canteado': 'Canteado',
-            'Numerado': 'Numerado',
-            'Embalaje': 'Embalaje'
         }
 
         # Mapeo de subprocesos
@@ -747,6 +734,7 @@ try:
         st.bar_chart(df.groupby('Pedido')['Prioridad'].mean().sort_values(ascending=False))
     else:
         st.error("No se pudo encontrar una solución óptima para los pedidos actuales")
+
 finally:
     # Asegurarnos de eliminar el archivo de credenciales incluso si hay un error
     if os.path.exists(credentials_path):
