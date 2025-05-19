@@ -41,6 +41,7 @@ streamlit
 pandas
 plotly
 ortools
+google-cloud-bigquery
 ```
 
 ### Instalación

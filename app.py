@@ -7,6 +7,8 @@ from ortools_sergar import planificar_produccion
 import plotly.graph_objects as go
 
 from processing.transformations import process_data
+from bigquery.uploader import insert_sales_orders
+from config import credentials_path, TABLE_ID
 
 # Configuración de la página (debe ser el primer comando de Streamlit)
 st.set_page_config(
@@ -56,6 +58,7 @@ with st.sidebar:
         try:
             df = pd.read_excel(uploaded_excel_file, decimal=",", date_format="%d/%m/%Y")
             orders_list = process_data(df)
+            insert_sales_orders(orders_list, credentials_path, TABLE_ID)
             st.success("Archivo Excel cargado correctamente")
         except Exception as e:
             st.error(f"Error al cargar el archivo Excel: {str(e)}")
