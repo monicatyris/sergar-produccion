@@ -1,4 +1,7 @@
 streamlit==1.32.0
 pandas==2.2.0
 plotly==5.18.0
-ortools==9.9.3963 
+google-cloud-bigquery==3.17.2
+ortools==9.7.2996
+db-dtypes==1.1.1
+python-dotenv 
