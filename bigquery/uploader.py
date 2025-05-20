@@ -1,13 +1,13 @@
 from google.cloud import bigquery
 
-def insert_sales_orders(orders: list, credentials_path: str, table_id: str):
+def load_sales_orders(orders: list, credentials_path: str, table_id: str):
 
     # Create client
     client = bigquery.Client.from_service_account_json(credentials_path)
 
     # Create job config
     job_config = bigquery.LoadJobConfig(
-        write_disposition="WRITE_APPEND",
+        write_disposition="WRITE_TRUNCATE",
         source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON
         )
     
