@@ -60,10 +60,10 @@ def process_data(df: pd.DataFrame) -> list:
     - Family and subfamily fields are combined into a single string
     """
 
-    df = df.rename(columns = rename_columns())
-    df = set_data_types(df)
+    df_renamed = df.rename(columns = rename_columns())
+    df_typed = set_data_types(df_renamed)
     
-    grouped_df = df.groupby(['numero_pedido', 'cliente', 'fecha_pedido', 'fecha_entrega']).apply(
+    grouped_df = df_typed.groupby(['numero_pedido', 'cliente', 'fecha_pedido', 'fecha_entrega']).apply(
         lambda x: {
             'numero_pedido': _convert_to_native_types(x.name[0]),
             'cliente': _convert_to_native_types(x.name[1]),
