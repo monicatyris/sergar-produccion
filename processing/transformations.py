@@ -91,6 +91,7 @@ def process_data(df: pd.DataFrame) -> list:
                     '_': _convert_to_native_types(row['IT07 Mecanizado']),
                     'plotter': _convert_to_native_types(row['IT07 Mecanizado Plotter']),
                     'fresado': _convert_to_native_types(row['IT07 Mecanizado Fresado']),
+                    'troquelado': _convert_to_native_types(row['IT07 Mecanizado Troquelado']),
                     'laser': _convert_to_native_types(row['IT07 Mecanizado Laser']),
                     'semicorte': _convert_to_native_types(row['IT07 Mecanizado Semicorte']),
                     'plegado': _convert_to_native_types(row['IT07 Mecanizado Plegado']),
