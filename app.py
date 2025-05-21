@@ -9,6 +9,17 @@ from google.cloud import bigquery
 import os
 from ortools.sat.python import cp_model
 from dotenv import load_dotenv
+from typing import Dict, List, Tuple, Any
+from utils import (
+    procesar_nombre_proceso,
+    completar_datos_procesos,
+    calcular_fechas_limite_internas,
+    calcular_prioridad,
+    MAPEO_PROCESOS,
+    MAPEO_SUBPROCESOS,
+    SECUENCIA_PROCESOS,
+    SUBPROCESOS_VALIDOS
+)
 
 # Cargar variables de entorno
 load_dotenv()
@@ -23,35 +34,16 @@ st.set_page_config(
 # Configuración de BigQuery desde variables de entorno
 PROJECT_ID = os.getenv('BIGQUERY_PROJECT_ID')
 DATASET_ID = os.getenv('BIGQUERY_DATASET_ID')
-TABLE_ID = os.getenv('BIGQUERY_TABLE_ID')
-table_id = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}"
+TABLE_NAME = os.getenv('BIGQUERY_TABLE_NAME')
+TABLE_ID = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME}"
+CREDENTIALS_PATH = os.getenv('BIGQUERY_CREDENTIALS_PATH')
 
-# Crear diccionario de credenciales desde variables de entorno
-credentials_json = {
-    "type": os.getenv('BIGQUERY_TYPE'),
-    "project_id": os.getenv('BIGQUERY_PROJECT_ID'),
-    "private_key_id": os.getenv('BIGQUERY_PRIVATE_KEY_ID'),
-    "private_key": os.getenv('BIGQUERY_PRIVATE_KEY'),
-    "client_email": os.getenv('BIGQUERY_CLIENT_EMAIL'),
-    "client_id": os.getenv('BIGQUERY_CLIENT_ID'),
-    "auth_uri": os.getenv('BIGQUERY_AUTH_URI'),
-    "token_uri": os.getenv('BIGQUERY_TOKEN_URI'),
-    "auth_provider_x509_cert_url": os.getenv('BIGQUERY_AUTH_PROVIDER_X509_CERT_URL'),
-    "client_x509_cert_url": os.getenv('BIGQUERY_CLIENT_X509_CERT_URL'),
-    "universe_domain": os.getenv('BIGQUERY_UNIVERSE_DOMAIN')
-}
-
-# Guardar las credenciales en un archivo temporal
-credentials_path = "sergar-credentials.json"
+# Crear cliente de BigQuery desde el archivo de credenciales
 try:
-    with open(credentials_path, "w") as f:
-        json.dump(credentials_json, f)
-
-    # Crear cliente de BigQuery
-    client = bigquery.Client.from_service_account_json(credentials_path)
-
+    client = bigquery.Client.from_service_account_json(CREDENTIALS_PATH, location="europe-southwest1")
+    
     # Realizar la consulta
-    query = f'SELECT * FROM `{table_id}`'
+    query = f'SELECT * FROM `{TABLE_ID}`'
     query_job = client.query(query)
     results = query_job.result()
 
@@ -68,158 +60,31 @@ try:
     # Crear un nuevo DataFrame con los datos expandidos
     df_expanded = pd.json_normalize(df['articulos'])
 
+    # Añadir la fecha de entrega del DataFrame original
+    df_expanded['fecha_entrega'] = df['fecha_entrega'].values
+
+    # Guardar df_expanded en un archivo CSV para revisión
+    df_expanded.to_csv('df_expanded.csv', index=False, encoding='utf-8')
+
+    # Imprimir las columnas del nuevo DataFrame
+    print("Columnas del nuevo DataFrame:")
+    print(df_expanded.columns)
+    # Columnas del nuevo DataFrame:
+    #    Index(['nombre', 'OT_ID_Linea', 'familia', 'cantidad', 'importe',
+    #        'IT01_Dibujo', 'IT02_Pantalla', 'IT03_Corte', 'IT05_Grabado',
+    #        'IT06_Adhesivo', 'IT06_Laminado', 'IT07_Taladro', 'IT07_Can_romo',
+    #        'IT07_Numerado', 'IT08_Embalaje', 'IT04_Impresion._',
+    #        'IT04_Impresion.digital', 'IT04_Impresion.serigrafia',
+    #        'IT07_Mecanizado._', 'IT07_Mecanizado.plotter',
+    #        'IT07_Mecanizado.fresado', 'IT07_Mecanizado.laser',
+    #        'IT07_Mecanizado.semicorte', 'IT07_Mecanizado.plegado',
+    #        'IT07_Mecanizado.burbuja_teclas', 'IT07_Mecanizado.hendido',
+    #        'IT07_Mecanizado.cepillado'],
+    #    dtype='object') """
+
     # Definir fecha de inicio y actual
     fecha_inicio = datetime(2024, 1, 1)  # Fecha base fija
     fecha_actual = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-
-    # Función para procesar nombres de procesos y subprocesos
-    def procesar_nombre_proceso(nombre_completo):
-        """
-        Procesa el nombre completo de un proceso para extraer el proceso principal y subproceso.
-        Ejemplo: 'IT07_Mecanizado_laser' -> ('Mecanizado', 'Láser')
-        """
-        # Mapeo de nombres de procesos
-        MAPEO_PROCESOS = {
-            'IT01_Dibujo': 'Dibujo',
-            'IT02_Pantalla': 'Pantalla',
-            'IT03_Corte': 'Corte',
-            'IT04_Impresion': 'Impresión',
-            'IT05_Grabado': 'Grabado',
-            'IT06_Adhesivo': 'Adhesivo',
-            'IT06_Laminado': 'Laminado',
-            'IT07_Mecanizado': 'Mecanizado',
-            'IT07_Taladro': 'Taladro',
-            'IT07_Can_romo': 'Canteado',
-            'IT07_Numerado': 'Numerado',
-            'IT08_Embalaje': 'Embalaje',
-        }
-
-        # Mapeo de subprocesos
-        MAPEO_SUBPROCESOS = {
-            'laser': 'Láser',
-            'digital': 'Digital',
-            'serigrafia': 'Serigrafía',
-            'fresado': 'Fresado',
-            'plotter': 'Plotter',
-            'burbuja_teclas': 'Burbuja teclas',
-            'hendido': 'Hendido',
-            'plegado': 'Plegado',
-            'semicorte': 'Semicorte'
-        }
-
-        # Limpiar el nombre completo
-        nombre_completo = nombre_completo.strip()
-
-        # Si el nombre está vacío, retornar valores por defecto
-        if not nombre_completo:
-            return "Sin Proceso", "Sin especificar"
-
-        # Si el nombre completo está en el mapeo de procesos, usarlo directamente
-        if nombre_completo in MAPEO_PROCESOS:
-            return MAPEO_PROCESOS[nombre_completo], "Sin especificar"
-
-        # Separar el proceso y el subproceso
-        # Primero, buscar el proceso base en el nombre
-        proceso_base = None
-        for key in MAPEO_PROCESOS.keys():
-            if nombre_completo.startswith(key):
-                proceso_base = key
-                break
-
-        if proceso_base is None:
-            # Si no se encuentra un proceso base con IT, intentar con el nombre directo
-            nombre_sin_it = nombre_completo.split('_')[-1] if '_' in nombre_completo else nombre_completo
-            if nombre_sin_it in MAPEO_PROCESOS:
-                return MAPEO_PROCESOS[nombre_sin_it], "Sin especificar"
-            return nombre_completo, "Sin especificar"
-        
-        # Obtener el proceso mapeado
-        proceso = MAPEO_PROCESOS[proceso_base]
-
-        # Extraer el subproceso
-        subproceso = nombre_completo[len(proceso_base):].strip()
-        if subproceso.startswith('_'):
-            subproceso = subproceso[1:].strip()
-
-        # Si no hay subproceso o es '_', retornar sin subproceso
-        if not subproceso or subproceso == '_':
-            return proceso, "Sin especificar"
-
-        # Limpiar el subproceso
-        subproceso = subproceso.lower().strip()
-        # Eliminar el nombre del proceso del subproceso si está presente
-        subproceso = subproceso.replace(proceso_base.lower(), '').strip()
-        # Eliminar espacios y guiones bajos adicionales
-        subproceso = subproceso.replace('_', ' ').strip()
-
-        # Buscar el subproceso en el mapeo
-        subproceso_mapeado = MAPEO_SUBPROCESOS.get(subproceso, subproceso)
-        # Si el subproceso no está en el mapeo, intentar con el formato con guiones bajos
-        if subproceso_mapeado == subproceso:
-            subproceso_alt = subproceso.replace(' ', '_')
-            subproceso_mapeado = MAPEO_SUBPROCESOS.get(subproceso_alt, subproceso)
-
-        return (proceso, subproceso_mapeado)
-
-    # Función para completar los datos de los procesos
-    def completar_datos_procesos(pedidos):
-        for pedido, data in pedidos.items():
-            procesos_completos = []
-            procesos_agrupados = {}  # Para agrupar subprocesos por proceso principal
-
-            for proceso_info in data['procesos']:
-                nombre_completo = proceso_info[0]
-                duracion = proceso_info[1]
-                proceso, subproceso = procesar_nombre_proceso(nombre_completo)
-                ot = proceso_info[3]  # Mantener el OT original (ID Linea)
-                operario = "Por Asignar"
-
-                # Agrupar subprocesos por proceso principal
-                if proceso not in procesos_agrupados:
-                    procesos_agrupados[proceso] = []
-                
-                procesos_agrupados[proceso].append({
-                    'subproceso': subproceso,
-                    'duracion': duracion,
-                    'ot': ot,
-                    'operario': operario
-                })
-
-            # Convertir los procesos agrupados a la estructura final
-            for proceso, subprocesos in procesos_agrupados.items():
-                for subproceso_info in subprocesos:
-                    procesos_completos.append([
-                        proceso,  # proceso principal
-                        subproceso_info['duracion'],
-                        subproceso_info['subproceso'],
-                        subproceso_info['ot'],  # Mantener el OT original
-                        subproceso_info['operario']
-                    ])
-
-            data['procesos'] = procesos_completos
-        return pedidos
-
-    # Definir secuencia de procesos (sin prefijo IT)
-    SECUENCIA_PROCESOS = {
-        'Dibujo': 1,
-        'Pantalla': 2,
-        'Corte': 3,
-        'Impresión': 4,
-        'Grabado': 5,
-        'Adhesivo': 6,
-        'Laminado': 7,
-        'Mecanizado': 8,
-        'Taladro': 9,
-        'Canteado': 10,
-        'Numerado': 11,
-        'Embalaje': 12
-    }
-
-    # Definir lista de subprocesos válidos (sin prefijo IT)
-    SUBPROCESOS_VALIDOS = {
-        'Mecanizado': ['Sin especificar', 'Burbuja teclas', 'Fresado', 'Hendido', 'Láser', 'Plegado', 'Plotter', 'Semicorte'],
-        'Impresión': ['Sin especificar', 'Digital', 'Serigrafía']
-    }
 
     # Sidebar para entrada de datos
     with st.sidebar:
@@ -232,26 +97,25 @@ try:
         # Modificar la carga de pedidos
         if uploaded_file is not None:
             try:
-                pedidos = json.load(uploaded_file)
+                pedidos: Dict[str, Dict[str, Any]] = json.load(uploaded_file)
                 pedidos = completar_datos_procesos(pedidos)
                 st.success("Archivo cargado correctamente")
             except:
                 st.error("Error al cargar el archivo")
                 with open('pedidos_actualizados.json', 'r', encoding='utf-8') as f:
-                    pedidos = json.load(f)
+                    pedidos: Dict[str, Dict[str, Any]] = json.load(f)
                     pedidos = completar_datos_procesos(pedidos)
         else:
             with open('pedidos_actualizados.json', 'r', encoding='utf-8') as f:
-                pedidos = json.load(f)
+                pedidos: Dict[str, Dict[str, Any]] = json.load(f)
                 pedidos = completar_datos_procesos(pedidos)
 
     # Procesar los datos para la planificación
-    pedidos = {}
-    procesos_unicos = set()  # Conjunto para almacenar procesos únicos
+    pedidos: Dict[str, Dict[str, Any]] = {}
+    procesos_unicos: set = set()  # Conjunto para almacenar procesos únicos
     
-    for _, row in df.iterrows():
-        articulo = row['articulos']
-        pedido_id = str(row['numero_pedido'])
+    for _, row in df_expanded.iterrows():
+        pedido_id = str(row['OT_ID_Linea'])
         
         if pedido_id not in pedidos:
             # Calcular días hasta la entrega desde la fecha base
@@ -263,53 +127,41 @@ try:
                 dias_hasta_entrega = 0
             
             pedidos[pedido_id] = {
-                "nombre": articulo['nombre'],
-                "cantidad": articulo['cantidad'],
+                "nombre": row['nombre'],
+                "cantidad": row['cantidad'],
                 "fecha_entrega": dias_hasta_entrega,
                 "procesos": []
             }
         
         # Procesar los procesos IT
-        for key, value in articulo.items():
+        for key, value in row.items():
             if key.startswith('IT'):
-                procesos_unicos.add(key)  # Añadir el proceso al conjunto
-                if isinstance(value, dict):
-                    # Procesar subprocesos
-                    for subproceso, estado in value.items():
-                        if pd.notna(estado) and estado != '':
-                            nombre_completo = f"{key} {subproceso}"
-                            procesos_unicos.add(nombre_completo)  # Añadir el proceso completo
-                            duracion = 1  # Por defecto
-                            ot = articulo.get('ID Linea', 'Sin OT')
-                            operario = "Por Asignar"
-                            
-                            # Verificar si el proceso ya existe
-                            proceso, subproceso = procesar_nombre_proceso(nombre_completo)
-                            
-                            if not any(p[0] == proceso and p[2] == subproceso for p in pedidos[pedido_id]["procesos"]):
-                                pedidos[pedido_id]["procesos"].append([
-                                    nombre_completo,  # nombre completo del proceso
-                                    duracion,        # duracion
-                                    "Sin Subproceso", # subproceso (se procesará después)
-                                    ot,             # ot (ID Linea)
-                                    operario        # operario
-                                ])
-                elif pd.notna(value) and value != '':
-                    # Procesar procesos simples
+                # Separar el proceso y subproceso del nombre de la columna
+                if '.' in key:
+                    proceso, subproceso = key.split('.')
+                    if subproceso == '_':
+                        # Si es un proceso sin subproceso específico
+                        nombre_completo = proceso
+                        subproceso = "Sin Subproceso"
+                    else:
+                        nombre_completo = f"{proceso} {subproceso}"
+                else:
+                    # Si es un proceso simple sin subproceso
                     nombre_completo = key
-                    procesos_unicos.add(nombre_completo)  # Añadir el proceso simple
+                    subproceso = "Sin Subproceso"
+
+                if pd.notna(value) and value != '':
+                    procesos_unicos.add(nombre_completo)  # Añadir el proceso completo
                     duracion = 1  # Por defecto
-                    ot = articulo.get('ID Linea', 'Sin OT')
+                    ot = row.get('OT_ID_Linea', 'Sin OT')
                     operario = "Por Asignar"
                     
                     # Verificar si el proceso ya existe
-                    proceso, subproceso = procesar_nombre_proceso(nombre_completo)
-                    
-                    if not any(p[0] == proceso and p[2] == subproceso for p in pedidos[pedido_id]["procesos"]):
+                    if not any(p[0] == nombre_completo and p[2] == subproceso for p in pedidos[pedido_id]["procesos"]):
                         pedidos[pedido_id]["procesos"].append([
                             nombre_completo,  # nombre completo del proceso
                             duracion,        # duracion
-                            "Sin Subproceso", # subproceso (se procesará después)
+                            subproceso,      # subproceso
                             ot,             # ot (ID Linea)
                             operario        # operario
                         ])
@@ -320,10 +172,51 @@ try:
         # Ordenar los procesos según la secuencia predefinida
         pedidos[pedido_id]["procesos"].sort(key=lambda x: SECUENCIA_PROCESOS.get(x[0], 999))
 
-
     # Ordenar pedidos por fecha de entrega y seleccionar los 5 más urgentes
     pedidos_ordenados = sorted(pedidos.items(), key=lambda x: x[1]['fecha_entrega'])
     pedidos_planificacion = dict(pedidos_ordenados[:5])
+
+    # DEBUG: Checkbox en el sidebar
+    with st.sidebar:
+        st.subheader("🔧 Opciones de Depuración")
+        debug_mode = st.checkbox("Modo Depuración", value=False)
+
+    # DEBUG: Información de depuración en la página principal
+    if debug_mode:
+        st.subheader("🔍 Información de Depuración")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("### Pedidos en planificación")
+            st.write(list(pedidos_planificacion.keys()))
+            st.write("### Columnas disponibles")
+            st.write(df_expanded.columns.tolist())
+        
+        with col2:
+            st.write("### IDs en df_expanded")
+            st.write(df_expanded['OT_ID_Linea'].unique().tolist())
+        
+        st.write("### Datos de los pedidos en planificación")
+        df_expanded['OT_ID_Linea'] = df_expanded['OT_ID_Linea'].astype(str)
+        df_planificacion = df_expanded[df_expanded['OT_ID_Linea'].isin(pedidos_planificacion.keys())]
+        
+        if not df_planificacion.empty:
+            st.dataframe(
+                df_planificacion,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "OT_ID_Linea": st.column_config.TextColumn("OT ID", width="small"),
+                    "nombre": st.column_config.TextColumn("Nombre", width="large"),
+                    "cantidad": st.column_config.NumberColumn("Cantidad", width="small"),
+                    "importe": st.column_config.NumberColumn("Importe", width="small", format="%.2f €"),
+                    "fecha_entrega": st.column_config.DateColumn("Fecha Entrega", width="medium", format="DD/MM/YYYY")
+                }
+            )
+        else:
+            st.warning("No se encontraron datos para los pedidos seleccionados")
+            st.write("IDs en pedidos_planificacion:", list(pedidos_planificacion.keys()))
+            st.write("IDs en df_expanded:", df_expanded['OT_ID_Linea'].unique().tolist())
 
     # Ejecutar planificación
     plan, makespan, status = planificar_produccion(pedidos_planificacion)
@@ -363,7 +256,7 @@ try:
         df['Secuencia'] = df.apply(lambda row: f"Paso {row['Orden_Proceso'] + 1} de {len(pedidos[str(row['Pedido'])]['procesos'])}", axis=1)
         
         # Determinar el estado de cada proceso
-        def determinar_estado(row):
+        def determinar_estado(row: pd.Series) -> str:
             if row['Fecha Fin'] < fecha_actual:
                 return 'Finalizado'
             elif row['Fecha Inicio'] <= fecha_actual <= row['Fecha Fin']:
@@ -373,7 +266,7 @@ try:
             else:
                 return 'Pendiente'
 
-        def determinar_cumplimiento(row):
+        def determinar_cumplimiento(row: pd.Series) -> str:
             fecha_limite = fecha_inicio + timedelta(days=pedidos[str(row['Pedido'])]['fecha_entrega'])
             if row['Fecha Fin'] > fecha_limite:
                 return 'Fuera de Plazo'
@@ -631,78 +524,11 @@ try:
             - Cumplimiento: {row['Cumplimiento']}
             """)
 
-        # Definir costes relativos de los procesos
-        costes_procesos = {
-            'Dibujo': 1.0,      # Coste base
-            'Impresión': 1.2,   # 20% más costoso que dibujo
-            'Serigrafía': 1.5,  # 50% más costoso que dibujo
-            'Taladro': 1.3,     # 30% más costoso que dibujo
-            'Corte': 1.4,       # 40% más costoso que dibujo
-            'Resina': 2.0,      # 100% más costoso que dibujo (proceso externo)
-            'Grabado': 1.1,     # 10% más costoso que dibujo
-            'Barniz': 1.1,      # 10% más costoso que dibujo
-            'Embalaje': 0.8     # 20% menos costoso que dibujo
-        }
-
-        # Función para calcular fechas límite internas
-        def calcular_fechas_limite_internas(pedido, data):
-            try:
-                fecha_entrega = fecha_inicio + timedelta(days=data['fecha_entrega'])
-                procesos = data['procesos']
-                total_dias = sum(proceso_info[1] for proceso_info in procesos)  # La duración es el segundo elemento
-                
-                fechas_limite = {}
-                dias_acumulados = 0
-                
-                for i, proceso_info in enumerate(procesos):
-                    proceso = proceso_info[0]  # El nombre del proceso es el primer elemento
-                    duracion = proceso_info[1]  # La duración es el segundo elemento
-                    
-                    # Distribuir el tiempo restante proporcionalmente
-                    dias_asignados = (duracion / total_dias) * data['fecha_entrega']
-                    fecha_limite = fecha_inicio + timedelta(days=int(dias_acumulados + dias_asignados))
-                    fechas_limite[i] = fecha_limite
-                    dias_acumulados += dias_asignados
-                
-                return fechas_limite
-            except Exception as e:
-                print(f"Error al calcular fechas límite internas para pedido {pedido}: {str(e)}")
-                return {}  # Retornar diccionario vacío en caso de error
-
         # Calcular fechas límite internas para todos los pedidos
         fechas_limite_internas = {
-            pedido: calcular_fechas_limite_internas(pedido, data) 
+            pedido: calcular_fechas_limite_internas(pedido, data, fecha_inicio) 
             for pedido, data in pedidos.items()
         }
-
-        # Función para calcular la prioridad de un pedido
-        def calcular_prioridad(pedido_id, pedido_data):
-            """
-            Calcula la prioridad de un pedido basado en varios factores:
-            - Tiempo hasta la entrega
-            - Cantidad de procesos
-            - Estado de los procesos
-            """
-            try:
-                # Factor de tiempo (más urgente = mayor prioridad)
-                tiempo_hasta_entrega = pedido_data['fecha_entrega']
-                factor_tiempo = 1 / (tiempo_hasta_entrega + 1)  # +1 para evitar división por cero
-                
-                # Factor de cantidad (más procesos = mayor prioridad)
-                cantidad_procesos = len(pedido_data['procesos'])
-                factor_cantidad = cantidad_procesos / 10  # Normalizado a 10 procesos
-                
-                # Factor de estado (procesos pendientes = mayor prioridad)
-                procesos_pendientes = sum(1 for p in pedido_data['procesos'] if p[4] == "Por Asignar")
-                factor_estado = procesos_pendientes / cantidad_procesos if cantidad_procesos > 0 else 0
-                
-                # Calcular prioridad final (0-100)
-                prioridad = (factor_tiempo * 0.5 + factor_cantidad * 0.3 + factor_estado * 0.2) * 100
-                
-                return round(prioridad, 2)
-            except Exception as e:
-                print(f"Error al calcular prioridad para pedido {pedido_id}: {str(e)}")
-                return 0
 
         # Añadir prioridad y fechas límite internas al DataFrame
         df['Prioridad'] = df['Pedido'].apply(lambda x: calcular_prioridad(x, pedidos[str(x)]))
@@ -735,7 +561,13 @@ try:
     else:
         st.error("No se pudo encontrar una solución óptima para los pedidos actuales")
 
-finally:
-    # Asegurarnos de eliminar el archivo de credenciales incluso si hay un error
-    if os.path.exists(credentials_path):
-        os.remove(credentials_path) 
+except Exception as e:
+    st.error(f"Error al conectar con BigQuery: {str(e)}")
+    st.info("""
+    Por favor, verifica que:
+    1. El archivo de credenciales existe en la ruta especificada
+    2. El proyecto 'sergar' existe y está activo en Google Cloud
+    3. La cuenta de servicio tiene los permisos necesarios en BigQuery
+    4. El dataset y la tabla especificados existen y son accesibles
+    """)
+    st.stop() 
