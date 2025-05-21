@@ -21,6 +21,9 @@ from utils import (
     SUBPROCESOS_VALIDOS
 )
 
+from processing.transformations import process_data
+from bigquery.uploader import load_sales_orders, load_sales_orders_table
+
 # Cargar variables de entorno
 load_dotenv()
 
@@ -35,6 +38,7 @@ st.set_page_config(
 PROJECT_ID = os.getenv('BIGQUERY_PROJECT_ID')
 DATASET_ID = os.getenv('BIGQUERY_DATASET_ID')
 TABLE_NAME = os.getenv('BIGQUERY_TABLE_NAME')
+TABLE_NAME_SALES_ORDERS = os.getenv('BIGQUERY_TABLE_NAME_SALES_ORDERS', 'sales_orders')
 TABLE_ID = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME}"
 CREDENTIALS_PATH = os.getenv('BIGQUERY_CREDENTIALS_PATH')
 
@@ -109,6 +113,19 @@ try:
             with open('pedidos_actualizados.json', 'r', encoding='utf-8') as f:
                 pedidos: Dict[str, Dict[str, Any]] = json.load(f)
                 pedidos = completar_datos_procesos(pedidos)
+
+        # Opción para cargar pedidos desde Excel
+        st.subheader("Cargar Pedidos en Exel")
+        uploaded_excel_file = st.file_uploader("Cargar archivo Excel de pedidos", type=['xlsx'])
+        if uploaded_excel_file is not None:
+            try:
+                df = pd.read_excel(uploaded_excel_file, decimal=",", date_format="%d/%m/%Y")
+                orders_list = process_data(df)
+                load_sales_orders(orders_list, CREDENTIALS_PATH, TABLE_ID) 
+                load_sales_orders_table(df, CREDENTIALS_PATH, PROJECT_ID, DATASET_ID, TABLE_NAME_SALES_ORDERS)
+                st.success("Archivo Excel cargado correctamente")
+            except Exception as e:
+                st.error(f"Error al cargar el archivo Excel: {str(e)}")
 
     # Procesar los datos para la planificación
     pedidos: Dict[str, Dict[str, Any]] = {}
