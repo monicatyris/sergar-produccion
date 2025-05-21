@@ -45,19 +45,6 @@ CREDENTIALS_PATH = os.getenv('BIGQUERY_CREDENTIALS_PATH')
 try:
     client = bigquery.Client.from_service_account_json(CREDENTIALS_PATH, location="europe-southwest1")
     
-    # Definir lista de subprocesos válidos
-    SUBPROCESOS_VALIDOS = {
-        'Dibujo': ['Dibujo Técnico', 'Dibujo Artístico', 'Dibujo Vectorial'],
-        'Impresión': ['Impresión Digital', 'Impresión Offset', 'Impresión Serigráfica'],
-        'Corte': ['Corte Láser', 'Corte CNC', 'Corte Manual'],
-        'Mecanizado': ['Fresado', 'Torneado', 'Taladrado'],
-        'Laminado': ['Laminado Manual', 'Laminado Automático'],
-        'Embalaje': ['Embalaje Manual', 'Embalaje Automático'],
-        'Taladro': ['Taladro Manual', 'Taladro CNC'],
-        'Barniz': ['Barniz Manual', 'Barniz Automático'],
-        'Serigrafía': ['Serigrafía Manual', 'Serigrafía Automática'],
-        'Digital': ['Digitalización', 'Edición Digital']
-    }
     # Realizar la consulta
     query = f'SELECT * FROM `{TABLE_ID}`'
     query_job = client.query(query)
