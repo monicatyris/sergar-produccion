@@ -70,9 +70,7 @@ try:
     # Guardar df_expanded en un archivo CSV para revisión
     df_expanded.to_csv('df_expanded.csv', index=False, encoding='utf-8')
 
-    # Imprimir las columnas del nuevo DataFrame
-    print("Columnas del nuevo DataFrame:")
-    print(df_expanded.columns)
+    
     # Columnas del nuevo DataFrame:
     #    Index(['nombre', 'OT_ID_Linea', 'familia', 'cantidad', 'importe',
     #        'IT01_Dibujo', 'IT02_Pantalla', 'IT03_Corte', 'IT05_Grabado',
