@@ -101,7 +101,8 @@ def process_data(df: pd.DataFrame) -> list:
                 'IT07_Taladro': _convert_to_native_types(row['IT07 Taladro']),
                 'IT07_Can_romo': _convert_to_native_types(row['IT07 Can. Romo']),
                 'IT07_Numerado': _convert_to_native_types(row['IT07 Numerado']),
-                'IT08_Embalaje': _convert_to_native_types(row['IT08 Embalaje'])
+                'IT08_Embalaje': _convert_to_native_types(row['IT08 Embalaje']),
+                'servido': _convert_to_native_types(row['Servido'])
                 }
                 for _, row in x.iterrows()
             ]
