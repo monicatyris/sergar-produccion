@@ -1,4 +1,8 @@
-# Entornos virtuales de Python
+# Credenciales
+credentials/
+*.json
+
+# Entornos virtuales
 venv/
 venv_sergar/
 env/
@@ -74,4 +78,7 @@ site/
 
 # Archivos de sistema
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Archivos adicionales
+sergar-credentials.json 
