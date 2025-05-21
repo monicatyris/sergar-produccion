@@ -93,26 +93,6 @@ try:
     # Sidebar para entrada de datos
     with st.sidebar:
         st.image("logo-sergar.png")
-        
-        # Opción para cargar pedidos desde JSON
-        st.subheader("Cargar Pedidos")
-        uploaded_file = st.file_uploader("Cargar archivo JSON de pedidos", type=['json'])
-        
-        # Modificar la carga de pedidos
-        if uploaded_file is not None:
-            try:
-                pedidos: Dict[str, Dict[str, Any]] = json.load(uploaded_file)
-                pedidos = completar_datos_procesos(pedidos)
-                st.success("Archivo cargado correctamente")
-            except:
-                st.error("Error al cargar el archivo")
-                with open('pedidos_actualizados.json', 'r', encoding='utf-8') as f:
-                    pedidos: Dict[str, Dict[str, Any]] = json.load(f)
-                    pedidos = completar_datos_procesos(pedidos)
-        else:
-            with open('pedidos_actualizados.json', 'r', encoding='utf-8') as f:
-                pedidos: Dict[str, Dict[str, Any]] = json.load(f)
-                pedidos = completar_datos_procesos(pedidos)
 
         # Opción para cargar pedidos desde Excel
         st.subheader("Cargar Pedidos en Exel")
