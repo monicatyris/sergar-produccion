@@ -300,35 +300,35 @@ try:
         df = pd.DataFrame(plan, columns=['Inicio', 'Pedido', 'Orden_Proceso', 'Nombre', 'Duración', 'Operación', 'Subproceso', 'OT', 'Operario'])
         
         # Convertir días a fechas
-        df['Fecha Inicio'] = df['Inicio'].apply(lambda x: fecha_inicio + timedelta(days=x))
-        df['Fecha Fin'] = df.apply(lambda row: row['Fecha Inicio'] + timedelta(days=row['Duración']), axis=1)
+        df['Fecha Inicio Prevista'] = df['Inicio'].apply(lambda x: fecha_inicio + timedelta(days=x))
+        df['Fecha Fin Prevista'] = df.apply(lambda row: row['Fecha Inicio Prevista'] + timedelta(days=row['Duración']), axis=1)
         
         # Añadir información de secuencia de procesos
         df['Secuencia'] = df.apply(lambda row: f"Paso {row['Orden_Proceso'] + 1} de {len(pedidos[str(row['Pedido'])]['procesos'])}", axis=1)
         
         # Determinar el estado de cada proceso
-        def determinar_estado(row: pd.Series) -> str:
-            if row['Fecha Fin'] < fecha_actual:
-                return 'Finalizado'
-            elif row['Fecha Inicio'] <= fecha_actual <= row['Fecha Fin']:
-                return 'En Proceso'
-            elif row['Orden_Proceso'] == 0 or all(df[(df['Pedido'] == row['Pedido']) & (df['Orden_Proceso'] < row['Orden_Proceso'])]['Fecha Fin'] <= fecha_actual):
+        def determinar_estado_planificacion(row: pd.Series) -> str:
+            if row['Fecha Fin Prevista'] < fecha_actual:
+                return 'Planificado Finalizado'
+            elif row['Fecha Inicio Prevista'] <= fecha_actual <= row['Fecha Fin Prevista']:
+                return 'Activado'
+            elif row['Orden_Proceso'] == 0 or all(df[(df['Pedido'] == row['Pedido']) & (df['Orden_Proceso'] < row['Orden_Proceso'])]['Fecha Fin Prevista'] <= fecha_actual):
                 return 'Listo para Activar'
             else:
                 return 'Pendiente'
 
         def determinar_cumplimiento(row: pd.Series) -> str:
             fecha_limite = fecha_inicio + timedelta(days=pedidos[str(row['Pedido'])]['fecha_entrega'])
-            if row['Fecha Fin'] > fecha_limite:
+            if row['Fecha Fin Prevista'] > fecha_limite:
                 return 'Fuera de Plazo'
             else:
                 return 'En Plazo'
 
-        df['Estado'] = df.apply(determinar_estado, axis=1)
+        df['Estado'] = df.apply(determinar_estado_planificacion, axis=1)
         df['Cumplimiento'] = df.apply(determinar_cumplimiento, axis=1)
         
         # Reordenar y renombrar columnas para mejor visualización
-        columnas_ordenadas = ['Estado', 'Cumplimiento', 'Fecha Inicio', 'Fecha Fin', 'Pedido', 'Nombre', 'Operación', 'Subproceso', 'Secuencia', 'Duración', 'OT', 'Operario']
+        columnas_ordenadas = ['Estado', 'Cumplimiento', 'Fecha Inicio Prevista', 'Fecha Fin Prevista', 'Pedido', 'Nombre', 'Operación', 'Subproceso', 'Secuencia', 'Duración', 'OT', 'Operario']
         df = df[columnas_ordenadas]
         
         # Renombrar columnas para mejor comprensión
@@ -433,8 +433,8 @@ try:
         # Crear DataFrame para Gantt
         df_gantt = pd.DataFrame({
             'Task': [f"{row['Pedido']} - {row['Proceso']}" for _, row in df_filtrado.iterrows()],
-            'Start': [row['Fecha Inicio'] for _, row in df_filtrado.iterrows()],
-            'Finish': [row['Fecha Fin'] for _, row in df_filtrado.iterrows()],
+            'Start': [row['Fecha Inicio Prevista'] for _, row in df_filtrado.iterrows()],
+            'Finish': [row['Fecha Fin Prevista'] for _, row in df_filtrado.iterrows()],
             'Resource': [row['Proceso'] for _, row in df_filtrado.iterrows()]
         })
 
@@ -553,8 +553,8 @@ try:
             estado_emoji = {
                 'Fuera de Plazo': '⚠️',
                 'En Plazo': '✅',
-                'Finalizado': '✅',
-                'En Proceso': '🔄',
+                'Planificado Finalizado': '📅',
+                'Activado': '🔄',
                 'Listo para Activar': '🟢',
                 'Pendiente': '⏳'
             }
@@ -567,11 +567,11 @@ try:
             - Subproceso: {row['Subproceso']}
             - Número de OT: {row['Número de OT']}
             - Operario: {row['Operario']}
-            - Fecha de Inicio: {row['Fecha Inicio'].strftime('%d/%m/%Y')}
-            - Fecha de Finalización: {row['Fecha Fin'].strftime('%d/%m/%Y')}
+            - Fecha de Inicio Prevista: {row['Fecha Inicio Prevista'].strftime('%d/%m/%Y')}
+            - Fecha de Finalización Prevista: {row['Fecha Fin Prevista'].strftime('%d/%m/%Y')}
             - Fecha Límite: {fecha_limite.strftime('%d/%m/%Y')}
             - Duración: {row['Duración (días)']} días
-            - Estado: {row['Estado']}
+            - Estado: {row['Estado']} {estado_emoji.get(row['Estado'], '')}
             - Cumplimiento: {row['Cumplimiento']}
             """)
 
@@ -590,7 +590,7 @@ try:
 
         # Reordenar columnas para mejor visualización
         columnas_ordenadas = [
-            'Estado', 'Cumplimiento', 'Prioridad', 'Fecha Inicio', 'Fecha Fin', 
+            'Estado', 'Cumplimiento', 'Prioridad', 'Fecha Inicio Prevista', 'Fecha Fin Prevista', 
             'Fecha Límite Interna', 'Pedido', 'Nombre', 'Proceso', 'Subproceso', 
             'Secuencia', 'Duración (días)', 'Número de OT', 'Operario'
         ]
@@ -604,7 +604,7 @@ try:
         with col2:
             st.metric("Procesos Fuera de Plazo", len(df[df['Cumplimiento'] == 'Fuera de Plazo']))
         with col3:
-            st.metric("Procesos en Riesgo", len(df[df['Fecha Fin'] > df['Fecha Límite Interna']]))
+            st.metric("Procesos en Riesgo", len(df[df['Fecha Fin Prevista'] > df['Fecha Límite Interna']]))
 
         # Añadir gráfico de prioridades
         st.subheader("Distribución de Prioridades")
