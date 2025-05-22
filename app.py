@@ -70,20 +70,6 @@ try:
     # Guardar df_expanded en un archivo CSV para revisión
     df_expanded.to_csv('df_expanded.csv', index=False, encoding='utf-8')
 
-    
-    # Columnas del nuevo DataFrame:
-    #    Index(['nombre', 'OT_ID_Linea', 'familia', 'cantidad', 'importe',
-    #        'IT01_Dibujo', 'IT02_Pantalla', 'IT03_Corte', 'IT05_Grabado',
-    #        'IT06_Adhesivo', 'IT06_Laminado', 'IT07_Taladro', 'IT07_Can_romo',
-    #        'IT07_Numerado', 'IT08_Embalaje', 'IT04_Impresion._',
-    #        'IT04_Impresion.digital', 'IT04_Impresion.serigrafia',
-    #        'IT07_Mecanizado._', 'IT07_Mecanizado.plotter',
-    #        'IT07_Mecanizado.fresado', 'IT07_Mecanizado.laser',
-    #        'IT07_Mecanizado.semicorte', 'IT07_Mecanizado.plegado',
-    #        'IT07_Mecanizado.burbuja_teclas', 'IT07_Mecanizado.hendido',
-    #        'IT07_Mecanizado.cepillado'],
-    #    dtype='object') """
-
     # Definir fecha de inicio y actual
     fecha_inicio = datetime(2024, 1, 1)  # Fecha base fija
     fecha_actual = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -107,9 +93,22 @@ try:
 
     # Procesar los datos para la planificación
     pedidos: Dict[str, Dict[str, Any]] = {}
-    procesos_unicos: set = set()  # Conjunto para almacenar procesos únicos
+    procesos_unicos: set = set()
+    
+    # Contadores para depuración
+    total_articulos = 0
+    articulos_servidos = 0
+    articulos_planificados = 0
     
     for _, row in df_expanded.iterrows():
+        total_articulos += 1
+        
+        # Verificar si el artículo está totalmente servido
+        if row.get('servido') == 'Totalmente servido':
+            articulos_servidos += 1
+            continue  # Saltar este artículo si está totalmente servido
+            
+        articulos_planificados += 1
         pedido_id = str(row['OT_ID_Linea'])
         
         if pedido_id not in pedidos:
@@ -129,6 +128,7 @@ try:
             }
         
         # Procesar los procesos IT
+        procesos_especificos = {}  # Diccionario para agrupar procesos por tipo
         for key, value in row.items():
             if key.startswith('IT'):
                 # Separar el proceso y subproceso del nombre de la columna
@@ -145,20 +145,42 @@ try:
                     nombre_completo = key
                     subproceso = "Sin Subproceso"
 
-                if pd.notna(value) and value != '':
-                    procesos_unicos.add(nombre_completo)  # Añadir el proceso completo
+                # Solo incluir procesos que estén "En espera"
+                if pd.notna(value) and value == "En espera":
+                    # Obtener el nombre base del proceso (sin subproceso)
+                    proceso_base = nombre_completo.split()[0]
+                    
+                    # Agrupar por proceso base
+                    if proceso_base not in procesos_especificos:
+                        procesos_especificos[proceso_base] = []
+                    
+                    procesos_especificos[proceso_base].append({
+                        'nombre_completo': nombre_completo,
+                        'subproceso': subproceso,
+                        'ot': row.get('OT_ID_Linea', 'Sin OT')
+                    })
+
+        # Procesar los procesos agrupados
+        for proceso_base, procesos in procesos_especificos.items():
+            # Si hay procesos específicos (no "Sin Subproceso"), eliminar el genérico
+            tiene_especificos = any(p['subproceso'] != "Sin Subproceso" for p in procesos)
+            
+            for proceso in procesos:
+                # Si hay específicos, solo incluir los que no son genéricos
+                if not tiene_especificos or proceso['subproceso'] != "Sin Subproceso":
+                    procesos_unicos.add(proceso['nombre_completo'])
                     duracion = 1  # Por defecto
-                    ot = row.get('OT_ID_Linea', 'Sin OT')
                     operario = "Por Asignar"
                     
                     # Verificar si el proceso ya existe
-                    if not any(p[0] == nombre_completo and p[2] == subproceso for p in pedidos[pedido_id]["procesos"]):
+                    if not any(p[0] == proceso['nombre_completo'] and p[2] == proceso['subproceso'] 
+                             for p in pedidos[pedido_id]["procesos"]):
                         pedidos[pedido_id]["procesos"].append([
-                            nombre_completo,  # nombre completo del proceso
-                            duracion,        # duracion
-                            subproceso,      # subproceso
-                            ot,             # ot (ID Linea)
-                            operario        # operario
+                            proceso['nombre_completo'],  # nombre completo del proceso
+                            duracion,                   # duracion
+                            proceso['subproceso'],      # subproceso
+                            proceso['ot'],             # ot (ID Linea)
+                            operario                   # operario
                         ])
         
         # Procesar los nombres de procesos y subprocesos
@@ -183,35 +205,69 @@ try:
         
         with col1:
             st.write("### Pedidos en planificación")
-            st.write(list(pedidos_planificacion.keys()))
+            try:
+                pedidos_keys = list(pedidos_planificacion.keys())
+                st.write(pedidos_keys)
+            except Exception as e:
+                st.error(f"Error al mostrar pedidos: {str(e)}")
+                st.write("pedidos_planificacion:", pedidos_planificacion)
+            
             st.write("### Columnas disponibles")
-            st.write(df_expanded.columns.tolist())
+            try:
+                st.write(df_expanded.columns.tolist())
+            except Exception as e:
+                st.error(f"Error al mostrar columnas: {str(e)}")
+            
+            st.write("### Filtrado de artículos")
+            st.write(f"Total de artículos: {total_articulos}")
+            st.write(f"Artículos totalmente servidos: {articulos_servidos}")
+            st.write(f"Artículos para planificar: {articulos_planificados}")
         
         with col2:
             st.write("### IDs en df_expanded")
-            st.write(df_expanded['OT_ID_Linea'].unique().tolist())
+            try:
+                ids_unicos = df_expanded['OT_ID_Linea'].unique().tolist()
+                st.write(ids_unicos)
+            except Exception as e:
+                st.error(f"Error al mostrar IDs: {str(e)}")
+                st.write("df_expanded:", df_expanded)
         
         st.write("### Datos de los pedidos en planificación")
-        df_expanded['OT_ID_Linea'] = df_expanded['OT_ID_Linea'].astype(str)
-        df_planificacion = df_expanded[df_expanded['OT_ID_Linea'].isin(pedidos_planificacion.keys())]
-        
-        if not df_planificacion.empty:
-            st.dataframe(
-                df_planificacion,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "OT_ID_Linea": st.column_config.TextColumn("OT ID", width="small"),
-                    "nombre": st.column_config.TextColumn("Nombre", width="large"),
-                    "cantidad": st.column_config.NumberColumn("Cantidad", width="small"),
-                    "importe": st.column_config.NumberColumn("Importe", width="small", format="%.2f €"),
-                    "fecha_entrega": st.column_config.DateColumn("Fecha Entrega", width="medium", format="DD/MM/YYYY")
-                }
-            )
-        else:
-            st.warning("No se encontraron datos para los pedidos seleccionados")
-            st.write("IDs en pedidos_planificacion:", list(pedidos_planificacion.keys()))
-            st.write("IDs en df_expanded:", df_expanded['OT_ID_Linea'].unique().tolist())
+        try:
+            df_expanded['OT_ID_Linea'] = df_expanded['OT_ID_Linea'].astype(str)
+            df_planificacion = df_expanded[df_expanded['OT_ID_Linea'].isin(pedidos_planificacion.keys())]
+            
+            if not df_planificacion.empty:
+                st.dataframe(
+                    df_planificacion,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "OT_ID_Linea": st.column_config.TextColumn("OT ID", width="small"),
+                        "nombre": st.column_config.TextColumn("Nombre", width="large"),
+                        "cantidad": st.column_config.NumberColumn("Cantidad", width="small"),
+                        "importe": st.column_config.NumberColumn("Importe", width="small", format="%.2f €"),
+                        "fecha_entrega": st.column_config.DateColumn("Fecha Entrega", width="medium", format="DD/MM/YYYY")
+                    }
+                )
+            else:
+                st.warning("No se encontraron datos para los pedidos seleccionados")
+                st.write("IDs en pedidos_planificacion:", list(pedidos_planificacion.keys()))
+                st.write("IDs en df_expanded:", df_expanded['OT_ID_Linea'].unique().tolist())
+        except Exception as e:
+            st.error(f"Error al mostrar datos de planificación: {str(e)}")
+            st.write("Estado de los datos:")
+            st.write("df_expanded shape:", df_expanded.shape if hasattr(df_expanded, 'shape') else "No disponible")
+            st.write("pedidos_planificacion:", pedidos_planificacion)
+
+    # Imprimir en la ventana principal los pedidos en planificación en formato de tabla if debug_mode
+    if debug_mode:
+        st.write("Pedidos para hacer la planificación:")
+        try:
+            st.dataframe(pedidos_planificacion, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error al mostrar tabla de planificación: {str(e)}")
+            st.write("Contenido de pedidos_planificacion:", pedidos_planificacion)
 
     # Ejecutar planificación
     plan, makespan, status = planificar_produccion(pedidos_planificacion)
