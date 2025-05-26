@@ -233,12 +233,12 @@ try:
         # Ordenar los procesos según la secuencia predefinida
         pedidos[pedido_id]["procesos"].sort(key=lambda x: SECUENCIA_PROCESOS.get(x[0], 999))
 
-    # Ordenar pedidos por fecha de entrega y seleccionar los 5 más urgentes
+    # Ordenar pedidos por fecha de entrega y seleccionar los 10 más urgentes
     pedidos_ordenados = sorted(pedidos.items(), key=lambda x: x[1]['fecha_entrega'])
     
-    # Obtener los números de pedido únicos de los 5 más urgentes
+    # Obtener los números de pedido únicos de los 10 más urgentes
     pedidos_urgentes = set()
-    for pedido_id, _ in pedidos_ordenados[:5]:
+    for pedido_id, _ in pedidos_ordenados[:10]:
         # Buscar el número de pedido correspondiente a este OT
         numero_pedido = df_expanded[df_expanded['OT_ID_Linea'].astype(str) == str(pedido_id)]['numero_pedido'].iloc[0]
         pedidos_urgentes.add(numero_pedido)
@@ -331,9 +331,9 @@ try:
     plan, makespan, status = planificar_produccion(pedidos_planificacion)
 
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-        st.success("Se encontró una solución óptima para los 5 pedidos más urgentes")
+        st.success("Se encontró una solución óptima para los 10 pedidos más urgentes")
     elif status == cp_model.INFEASIBLE:
-        st.error("No se encontró una solución factible para los 5 pedidos más urgentes")
+        st.error("No se encontró una solución factible para los 10 pedidos más urgentes")
         st.info("""
         Posibles razones:
         1. Las fechas de entrega son demasiado cercanas
@@ -341,7 +341,7 @@ try:
         3. Hay conflictos en la secuencia de procesos
         """)
     elif status == cp_model.MODEL_INVALID:
-        st.error("El modelo es inválido para los 5 pedidos más urgentes")
+        st.error("El modelo es inválido para los 10 pedidos más urgentes")
         st.info("""
         Posibles razones:
         1. Variables no definidas correctamente
@@ -422,6 +422,50 @@ try:
                         st.session_state[key] = []
                 st.rerun()
             
+            # Inicializar df_filtrado con el DataFrame original
+            df_filtrado = df.copy()
+            
+            # Selector de rango de fechas
+            st.subheader("📅 Rango de fechas")
+            opciones_fechas = {
+                "1 Semana": 7,
+                "1 Mes": 30,
+                "6 Meses": 180,
+                "Año actual": 365,
+                "1 Año": 365,
+                "Todo": None
+            }
+            
+            rango_seleccionado = st.selectbox(
+                "Seleccionar rango",
+                options=list(opciones_fechas.keys()),
+                index=5  # Por defecto seleccionar "Todo"
+            )
+            
+            # Aplicar filtro de fechas
+            if rango_seleccionado != "Todo":
+                dias = opciones_fechas[rango_seleccionado]
+                fecha_limite = fecha_actual + timedelta(days=dias)
+                # Filtrar procesos que se realizan dentro del rango seleccionado
+                mascara_fechas = (
+                    # El proceso comienza dentro del rango
+                    ((df_filtrado['Fecha Inicio Prevista'] >= fecha_actual) & 
+                     (df_filtrado['Fecha Inicio Prevista'] <= fecha_limite)) |
+                    # O el proceso termina dentro del rango
+                    ((df_filtrado['Fecha Fin Prevista'] >= fecha_actual) & 
+                     (df_filtrado['Fecha Fin Prevista'] <= fecha_limite)) |
+                    # O el proceso abarca todo el rango
+                    ((df_filtrado['Fecha Inicio Prevista'] <= fecha_actual) & 
+                     (df_filtrado['Fecha Fin Prevista'] >= fecha_limite)) |
+                    # O el proceso ya comenzó pero aún no ha terminado
+                    ((df_filtrado['Fecha Inicio Prevista'] <= fecha_actual) & 
+                     (df_filtrado['Fecha Fin Prevista'] >= fecha_actual)) |
+                    # O el proceso ya terminó pero fue en los últimos 7 días
+                    ((df_filtrado['Fecha Fin Prevista'] >= fecha_actual - timedelta(days=dias)) & 
+                     (df_filtrado['Fecha Fin Prevista'] <= fecha_actual))
+                )
+                df_filtrado = df_filtrado[mascara_fechas]
+            
             # Checkbox para mostrar/ocultar diagrama de Gantt
             mostrar_gantt = st.checkbox("📊 Mostrar diagrama de Gantt", value=True)
             
@@ -433,15 +477,13 @@ try:
             # Filtro de número de pedido
             pedido_filtro = st.multiselect(
                 "Número de Pedido",
-                options=sorted(list(pedidos_urgentes)),
+                options=sorted(df_filtrado['Número de Pedido'].unique()),
                 key='pedido_filtro'
             )
             
             # Filtrar OTs según el pedido seleccionado
             if pedido_filtro:
-                df_filtrado = df[df['Número de Pedido'].isin(pedido_filtro)]
-            else:
-                df_filtrado = df
+                df_filtrado = df_filtrado[df_filtrado['Número de Pedido'].isin(pedido_filtro)]
             
             # Filtro de OT
             ot_filtro = st.multiselect(
@@ -455,12 +497,7 @@ try:
                 df_filtrado = df_filtrado[df_filtrado['OT'].isin(ot_filtro)]
             
             # Obtener procesos disponibles según los OT seleccionados
-            if ot_filtro:
-                df_filtrado = df_filtrado[df_filtrado['OT'].isin(ot_filtro)]
-                procesos_disponibles = df_filtrado['Proceso'].unique()
-            else:
-                df_filtrado = df
-                procesos_disponibles = df['Proceso'].unique()
+            procesos_disponibles = df_filtrado['Proceso'].unique()
             
             procesos_filtro = st.multiselect(
                 "Proceso",
@@ -523,6 +560,10 @@ try:
                 options=sorted(cumplimientos_disponibles),
                 key='cumplimiento_filtro'
             )
+            
+            # Actualizar df_filtrado con los cumplimientos seleccionados
+            if cumplimiento_filtro:
+                df_filtrado = df_filtrado[df_filtrado['Cumplimiento'].isin(cumplimiento_filtro)]
 
         # Crear DataFrame para Gantt
         df_gantt = pd.DataFrame({
@@ -581,17 +622,7 @@ try:
                     type='date',
                     showgrid=True,
                     gridwidth=1,
-                    gridcolor='LightGrey',
-                    rangeselector=dict(
-                        buttons=list([
-                            dict(count=7, label="1 Semana", step="day", stepmode="backward"),
-                            dict(count=1, label="1 Mes", step="month", stepmode="backward"),
-                            dict(count=6, label="6 Meses", step="month", stepmode="backward"),
-                            dict(count=1, label="Año actual", step="year", stepmode="todate"),
-                            dict(count=1, label="1 Año", step="year", stepmode="backward"),
-                            dict(step="all", label="Todo")
-                        ])
-                    )
+                    gridcolor='LightGrey'
                 ),
                 yaxis=dict(
                     showgrid=True,
