@@ -422,6 +422,9 @@ try:
                         st.session_state[key] = []
                 st.rerun()
             
+            # Checkbox para mostrar/ocultar diagrama de Gantt
+            mostrar_gantt = st.checkbox("📊 Mostrar diagrama de Gantt", value=True)
+            
             # Inicializar filtros en session_state si no existen
             for key in ['pedido_filtro', 'ot_filtro', 'procesos_filtro', 'subprocesos_filtro', 'estados_filtro', 'cumplimiento_filtro']:
                 if key not in st.session_state:
@@ -556,55 +559,56 @@ try:
             colores_actuales[recurso] = colores_procesos.get(proceso_base, '#808080')  # Gris por defecto
 
         # Crear figura de Gantt con Plotly
-        st.markdown("### Cronograma de producción")
-        fig = ff.create_gantt(df_gantt,
-                             index_col='Resource',
-                             show_colorbar=True,
-                             group_tasks=True,
-                             showgrid_x=True,
-                             showgrid_y=True,
-                             title='',
-                             bar_width=0.4,
-                             colors=colores_actuales)
+        if mostrar_gantt:
+            st.markdown("### Cronograma de producción")
+            fig = ff.create_gantt(df_gantt,
+                                index_col='Resource',
+                                show_colorbar=True,
+                                group_tasks=True,
+                                showgrid_x=True,
+                                showgrid_y=True,
+                                title='',
+                                bar_width=0.4,
+                                colors=colores_actuales)
 
-        # Configurar el layout del gráfico
-        fig.update_layout(
-            height=600,
-            xaxis_title="Fechas",
-            yaxis_title="Operaciones",
-            showlegend=True,
-            xaxis=dict(
-                type='date',
-                showgrid=True,
-                gridwidth=1,
-                gridcolor='LightGrey',
-                rangeselector=dict(
-                    buttons=list([
-                        dict(count=7, label="1 Semana", step="day", stepmode="backward"),
-                        dict(count=1, label="1 Mes", step="month", stepmode="backward"),
-                        dict(count=6, label="6 Meses", step="month", stepmode="backward"),
-                        dict(count=1, label="Año actual", step="year", stepmode="todate"),
-                        dict(count=1, label="1 Año", step="year", stepmode="backward"),
-                        dict(step="all", label="Todo")
-                    ])
+            # Configurar el layout del gráfico
+            fig.update_layout(
+                height=600,
+                xaxis_title="Fechas",
+                yaxis_title="Operaciones",
+                showlegend=True,
+                xaxis=dict(
+                    type='date',
+                    showgrid=True,
+                    gridwidth=1,
+                    gridcolor='LightGrey',
+                    rangeselector=dict(
+                        buttons=list([
+                            dict(count=7, label="1 Semana", step="day", stepmode="backward"),
+                            dict(count=1, label="1 Mes", step="month", stepmode="backward"),
+                            dict(count=6, label="6 Meses", step="month", stepmode="backward"),
+                            dict(count=1, label="Año actual", step="year", stepmode="todate"),
+                            dict(count=1, label="1 Año", step="year", stepmode="backward"),
+                            dict(step="all", label="Todo")
+                        ])
+                    )
+                ),
+                yaxis=dict(
+                    showgrid=True,
+                    gridwidth=1,
+                    gridcolor='LightGrey',
+                    tickangle=45,
+                    tickfont=dict(size=10)
+                ),
+                margin=dict(l=250, r=50, t=50, b=50),
+                font=dict(
+                    family="Roboto, sans-serif",
+                    size=12
                 )
-            ),
-            yaxis=dict(
-                showgrid=True,
-                gridwidth=1,
-                gridcolor='LightGrey',
-                tickangle=45,
-                tickfont=dict(size=10)
-            ),
-            margin=dict(l=250, r=50, t=50, b=50),
-            font=dict(
-                family="Roboto, sans-serif",
-                size=12
             )
-        )
-        
-        # Mostrar gráfico
-        st.plotly_chart(fig, use_container_width=True)
+            
+            # Mostrar gráfico
+            st.plotly_chart(fig, use_container_width=True)
         
         # Mostrar tabla de detalles filtrada
         st.markdown("### Detalles por OT")
@@ -627,7 +631,23 @@ try:
         
         # Aplicar los estilos a la tabla
         styled_df = df_filtrado.style.apply(color_row, axis=1)
-        st.dataframe(styled_df, hide_index=True)
+        
+        # Ajustar la altura de la tabla según si el diagrama de Gantt está visible
+        if mostrar_gantt:
+            st.dataframe(styled_df, hide_index=True, use_container_width=True)
+        else:
+            # Calcular altura basada en el número de filas (aproximadamente 35px por fila)
+            altura_por_fila = 35
+            altura_minima = 400  # altura mínima en píxeles
+            altura_maxima = 800  # altura máxima en píxeles
+            altura_calculada = min(max(len(df_filtrado) * altura_por_fila, altura_minima), altura_maxima)
+            
+            st.dataframe(
+                styled_df, 
+                hide_index=True, 
+                use_container_width=True,
+                height=altura_calculada
+            )
         
         # Métricas principales
         col1, col2, col3 = st.columns(3)
