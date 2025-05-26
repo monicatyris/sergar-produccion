@@ -64,8 +64,10 @@ try:
     # Crear un nuevo DataFrame con los datos expandidos
     df_expanded = pd.json_normalize(df['articulos'])
 
-    # Añadir la fecha de entrega del DataFrame original
+    # Añadir la fecha de entrega y el número de pedido del DataFrame original
     df_expanded['fecha_entrega'] = df['fecha_entrega'].values
+    df_expanded['numero_pedido'] = df['numero_pedido'].values
+
 
     # Guardar df_expanded en un archivo CSV para revisión
     df_expanded.to_csv('df_expanded.csv', index=False, encoding='utf-8')
@@ -191,7 +193,20 @@ try:
 
     # Ordenar pedidos por fecha de entrega y seleccionar los 5 más urgentes
     pedidos_ordenados = sorted(pedidos.items(), key=lambda x: x[1]['fecha_entrega'])
-    pedidos_planificacion = dict(pedidos_ordenados[:5])
+    
+    # Obtener los números de pedido únicos de los 5 más urgentes
+    pedidos_urgentes = set()
+    for pedido_id, _ in pedidos_ordenados[:5]:
+        # Buscar el número de pedido correspondiente a este OT
+        numero_pedido = df_expanded[df_expanded['OT_ID_Linea'].astype(str) == str(pedido_id)]['numero_pedido'].iloc[0]
+        pedidos_urgentes.add(numero_pedido)
+    
+    # Incluir todos los OTs que pertenecen a estos pedidos
+    pedidos_planificacion = {}
+    for pedido_id, data in pedidos.items():
+        numero_pedido = df_expanded[df_expanded['OT_ID_Linea'].astype(str) == str(pedido_id)]['numero_pedido'].iloc[0]
+        if numero_pedido in pedidos_urgentes:
+            pedidos_planificacion[pedido_id] = data
 
     # DEBUG: Checkbox en el sidebar
     with st.sidebar:
@@ -207,7 +222,8 @@ try:
             st.write("### Pedidos en planificación")
             try:
                 pedidos_keys = list(pedidos_planificacion.keys())
-                st.write(pedidos_keys)
+                st.write("OTs en planificación:", pedidos_keys)
+                st.write("Números de pedido únicos:", list(pedidos_urgentes))
             except Exception as e:
                 st.error(f"Error al mostrar pedidos: {str(e)}")
                 st.write("pedidos_planificacion:", pedidos_planificacion)
@@ -297,14 +313,14 @@ try:
 
     if plan:
         # Crear DataFrame para visualización
-        df = pd.DataFrame(plan, columns=['Inicio', 'Pedido', 'Orden_Proceso', 'Nombre', 'Duración', 'Operación', 'Subproceso', 'OT', 'Operario'])
+        df = pd.DataFrame(plan, columns=['Inicio', 'OT', 'Orden_Proceso', 'Nombre', 'Duración', 'Operación', 'Subproceso', 'OT_ID', 'Operario'])
         
         # Convertir días a fechas
         df['Fecha Inicio Prevista'] = df['Inicio'].apply(lambda x: fecha_inicio + timedelta(days=x))
         df['Fecha Fin Prevista'] = df.apply(lambda row: row['Fecha Inicio Prevista'] + timedelta(days=row['Duración']), axis=1)
         
         # Añadir información de secuencia de procesos
-        df['Secuencia'] = df.apply(lambda row: f"Paso {row['Orden_Proceso'] + 1} de {len(pedidos[str(row['Pedido'])]['procesos'])}", axis=1)
+        df['Secuencia'] = df.apply(lambda row: f"Paso {row['Orden_Proceso'] + 1} de {len(pedidos[str(row['OT'])]['procesos'])}", axis=1)
         
         # Determinar el estado de cada proceso
         def determinar_estado_planificacion(row: pd.Series) -> str:
@@ -312,13 +328,13 @@ try:
                 return 'Planificado Finalizado'
             elif row['Fecha Inicio Prevista'] <= fecha_actual <= row['Fecha Fin Prevista']:
                 return 'Activado'
-            elif row['Orden_Proceso'] == 0 or all(df[(df['Pedido'] == row['Pedido']) & (df['Orden_Proceso'] < row['Orden_Proceso'])]['Fecha Fin Prevista'] <= fecha_actual):
+            elif row['Orden_Proceso'] == 0 or all(df[(df['OT'] == row['OT']) & (df['Orden_Proceso'] < row['Orden_Proceso'])]['Fecha Fin Prevista'] <= fecha_actual):
                 return 'Listo para Activar'
             else:
                 return 'Pendiente'
 
         def determinar_cumplimiento(row: pd.Series) -> str:
-            fecha_limite = fecha_inicio + timedelta(days=pedidos[str(row['Pedido'])]['fecha_entrega'])
+            fecha_limite = fecha_inicio + timedelta(days=pedidos[str(row['OT'])]['fecha_entrega'])
             if row['Fecha Fin Prevista'] > fecha_limite:
                 return 'Fuera de Plazo'
             else:
@@ -327,15 +343,18 @@ try:
         df['Estado'] = df.apply(determinar_estado_planificacion, axis=1)
         df['Cumplimiento'] = df.apply(determinar_cumplimiento, axis=1)
         
+        # Añadir número de pedido al DataFrame
+        df['Número de Pedido'] = df['OT'].apply(lambda x: df_expanded[df_expanded['OT_ID_Linea'].astype(str) == str(x)]['numero_pedido'].iloc[0] if not df_expanded[df_expanded['OT_ID_Linea'].astype(str) == str(x)].empty else 'N/A')
+        
         # Reordenar y renombrar columnas para mejor visualización
-        columnas_ordenadas = ['Estado', 'Cumplimiento', 'Fecha Inicio Prevista', 'Fecha Fin Prevista', 'Pedido', 'Nombre', 'Operación', 'Subproceso', 'Secuencia', 'Duración', 'OT', 'Operario']
+        columnas_ordenadas = ['Estado', 'Cumplimiento', 'Fecha Inicio Prevista', 'Fecha Fin Prevista', 'OT', 'Número de Pedido', 'Nombre', 'Operación', 'Subproceso', 'Secuencia', 'Duración', 'OT_ID', 'Operario']
         df = df[columnas_ordenadas]
         
         # Renombrar columnas para mejor comprensión
         df = df.rename(columns={
             'Duración': 'Duración (días)',
             'Operación': 'Proceso',
-            'OT': 'Número de OT'
+            'OT_ID': 'Número de OT'
         })
 
         # Filtros en la sidebar
@@ -344,25 +363,43 @@ try:
             
             # Botón para limpiar filtros
             if st.button("🗑️ Limpiar filtros"):
-                for key in ['pedidos_filtro', 'procesos_filtro', 'subprocesos_filtro', 'estados_filtro', 'cumplimiento_filtro']:
+                for key in ['pedido_filtro', 'ot_filtro', 'procesos_filtro', 'subprocesos_filtro', 'estados_filtro', 'cumplimiento_filtro']:
                     if key in st.session_state:
                         st.session_state[key] = []
                 st.rerun()
             
             # Inicializar filtros en session_state si no existen
-            for key in ['pedidos_filtro', 'procesos_filtro', 'subprocesos_filtro', 'estados_filtro', 'cumplimiento_filtro']:
+            for key in ['pedido_filtro', 'ot_filtro', 'procesos_filtro', 'subprocesos_filtro', 'estados_filtro', 'cumplimiento_filtro']:
                 if key not in st.session_state:
                     st.session_state[key] = []
             
-            pedidos_filtro = st.multiselect(
-                "Número de pedido",
-                options=sorted(df['Pedido'].unique()),
-                key='pedidos_filtro'
+            # Filtro de número de pedido
+            pedido_filtro = st.multiselect(
+                "Número de Pedido",
+                options=sorted(list(pedidos_urgentes)),
+                key='pedido_filtro'
             )
             
-            # Obtener procesos disponibles según los pedidos seleccionados
-            if pedidos_filtro:
-                df_filtrado = df[df['Pedido'].isin(pedidos_filtro)]
+            # Filtrar OTs según el pedido seleccionado
+            if pedido_filtro:
+                df_filtrado = df[df['Número de Pedido'].isin(pedido_filtro)]
+            else:
+                df_filtrado = df
+            
+            # Filtro de OT
+            ot_filtro = st.multiselect(
+                "Número de OT",
+                options=sorted(df_filtrado['OT'].unique()),
+                key='ot_filtro'
+            )
+            
+            # Actualizar df_filtrado con los OTs seleccionados
+            if ot_filtro:
+                df_filtrado = df_filtrado[df_filtrado['OT'].isin(ot_filtro)]
+            
+            # Obtener procesos disponibles según los OT seleccionados
+            if ot_filtro:
+                df_filtrado = df_filtrado[df_filtrado['OT'].isin(ot_filtro)]
                 procesos_disponibles = df_filtrado['Proceso'].unique()
             else:
                 df_filtrado = df
@@ -412,7 +449,7 @@ try:
             estados_disponibles = df_filtrado['Estado'].unique()
             
             estados_filtro = st.multiselect(
-                "Estado del pedido",
+                "Estado de la OT",
                 options=sorted(estados_disponibles),
                 key='estados_filtro'
             )
@@ -432,7 +469,7 @@ try:
 
         # Crear DataFrame para Gantt
         df_gantt = pd.DataFrame({
-            'Task': [f"{row['Pedido']} - {row['Proceso']}" for _, row in df_filtrado.iterrows()],
+            'Task': [f"{row['OT']} - {row['Proceso']}" for _, row in df_filtrado.iterrows()],
             'Start': [row['Fecha Inicio Prevista'] for _, row in df_filtrado.iterrows()],
             'Finish': [row['Fecha Fin Prevista'] for _, row in df_filtrado.iterrows()],
             'Resource': [row['Proceso'] for _, row in df_filtrado.iterrows()]
@@ -516,7 +553,7 @@ try:
         st.plotly_chart(fig, use_container_width=True)
         
         # Mostrar tabla de detalles filtrada
-        st.markdown("### Detalles por pedido")
+        st.markdown("### Detalles por OT")
         
         # Definir los estilos para cada estado
         def color_row(row):
@@ -543,7 +580,7 @@ try:
         with col1:
             st.metric("Fecha de Finalización", (fecha_inicio + timedelta(days=makespan)).strftime("%d/%m/%Y"))
         with col2:
-            st.metric("Número de Pedidos", len(df_filtrado['Pedido'].unique()))
+            st.metric("Número de OTs", len(df_filtrado['OT'].unique()))
         with col3:
             st.metric("Total de Operaciones", len(df_filtrado))
         
@@ -564,11 +601,11 @@ try:
                 'Pendiente': '⏳'
             }
             
-            # Obtener la fecha límite del pedido
-            fecha_limite = fecha_inicio + timedelta(days=pedidos[str(row['Pedido'])]['fecha_entrega'])
+            # Obtener la fecha límite del OT
+            fecha_limite = fecha_inicio + timedelta(days=pedidos[str(row['OT'])]['fecha_entrega'])
             
             st.markdown(f"""
-            **Pedido {row['Pedido']} - {row['Proceso']}** {estado_emoji[row['Cumplimiento']]}
+            **OT {row['OT']} - {row['Proceso']}** {estado_emoji[row['Cumplimiento']]}
             - Subproceso: {row['Subproceso']}
             - Número de OT: {row['Número de OT']}
             - Operario: {row['Operario']}
@@ -587,16 +624,16 @@ try:
         }
 
         # Añadir prioridad y fechas límite internas al DataFrame
-        df['Prioridad'] = df['Pedido'].apply(lambda x: calcular_prioridad(x, pedidos[str(x)]))
+        df['Prioridad'] = df['OT'].apply(lambda x: calcular_prioridad(x, pedidos[str(x)]))
         df['Fecha Límite Interna'] = df.apply(
-            lambda row: fechas_limite_internas[str(row['Pedido'])][int(row['Secuencia'].split()[1]) - 1], 
+            lambda row: fechas_limite_internas[str(row['OT'])][int(row['Secuencia'].split()[1]) - 1], 
             axis=1
         )
 
         # Reordenar columnas para mejor visualización
         columnas_ordenadas = [
             'Estado', 'Cumplimiento', 'Prioridad', 'Fecha Inicio Prevista', 'Fecha Fin Prevista', 
-            'Fecha Límite Interna', 'Pedido', 'Nombre', 'Proceso', 'Subproceso', 
+            'Fecha Límite Interna', 'OT', 'Número de Pedido', 'Nombre', 'Proceso', 'Subproceso', 
             'Secuencia', 'Duración (días)', 'Número de OT', 'Operario'
         ]
         df = df[columnas_ordenadas]
@@ -605,7 +642,7 @@ try:
         st.subheader("Métricas de Prioridad")
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Pedidos Críticos", len(df[df['Prioridad'] > df['Prioridad'].median()]))
+            st.metric("OTs Críticos", len(df[df['Prioridad'] > df['Prioridad'].median()]))
         with col2:
             st.metric("Procesos Fuera de Plazo", len(df[df['Cumplimiento'] == 'Fuera de Plazo']))
         with col3:
@@ -613,7 +650,7 @@ try:
 
         # Añadir gráfico de prioridades
         st.subheader("Distribución de Prioridades")
-        st.bar_chart(df.groupby('Pedido')['Prioridad'].mean().sort_values(ascending=False))
+        st.bar_chart(df.groupby('OT')['Prioridad'].mean().sort_values(ascending=False))
     else:
         st.error("No se pudo encontrar una solución óptima para los pedidos actuales")
 
