@@ -75,6 +75,7 @@ def planificar_produccion(pedidos):
                 pedido,
                 i,
                 pedidos[pedido]["nombre"],
+                pedidos[pedido]["cantidad"],
                 duracion_dias,
                 proceso,
                 subproceso,

@@ -18,7 +18,8 @@ from utils import (
     MAPEO_PROCESOS,
     MAPEO_SUBPROCESOS,
     SECUENCIA_PROCESOS,
-    SUBPROCESOS_VALIDOS
+    SUBPROCESOS_VALIDOS,
+    COSTES_PROCESOS
 )
 
 from processing.transformations import process_data
@@ -73,7 +74,7 @@ try:
     df_expanded.to_csv('df_expanded.csv', index=False, encoding='utf-8')
 
     # Definir fecha de inicio y actual
-    fecha_inicio = datetime(2024, 1, 1)  # Fecha base fija
+    fecha_inicio = datetime(2023, 12, 28)  # Fecha base fija
     # fecha_actual = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     fecha_actual = datetime(2024, 1, 1)  # Fecha simulada para ver diferentes estados
 
@@ -122,7 +123,7 @@ try:
             dias_hasta_entrega = (fecha_entrega - fecha_inicio).days
             
             # Asegurar que la fecha sea positiva y tenga un mínimo de días para planificar
-            dias_minimos_planificacion = 5  # Mínimo de días para planificar cualquier pedido
+            dias_minimos_planificacion = 20  # Mínimo de días para planificar cualquier pedido
             if dias_hasta_entrega < dias_minimos_planificacion:
                 dias_hasta_entrega = dias_minimos_planificacion
             
@@ -175,7 +176,44 @@ try:
                 # Si hay específicos, solo incluir los que no son genéricos
                 if not tiene_especificos or proceso['subproceso'] != "Sin Subproceso":
                     procesos_unicos.add(proceso['nombre_completo'])
-                    duracion = 1  # Por defecto
+                    # Calcular duración basada en la cantidad y el tipo de proceso
+                    proceso_base = proceso['nombre_completo'].split()[0]
+                    cantidad = row['cantidad']
+                    
+                    # Duración base por unidad según el proceso (en días)
+                    duraciones_base = {
+                        'Dibujo': 0.03648,      # 3.648 días para 100 unidades
+                        'Impresión': 0.07296,   # 7.296 días para 100 unidades (Digital + Serigrafía)
+                        'Taladro': 0.01824,     # 1.824 días para 100 unidades
+                        'Corte': 0.01824,       # 1.824 días para 100 unidades
+                        'Canteado': 0.01824,    # 1.824 días para 100 unidades
+                        'Embalaje': 0.01824,    # 1.824 días para 100 unidades
+                        'Pantalla': 0.03648,    # Similar a Dibujo
+                        'Grabado': 0.03648,     # Similar a Dibujo
+                        'Adhesivo': 0.01824,    # Similar a Corte
+                        'Laminado': 0.01824,    # Similar a Corte
+                        'Mecanizado': 0.01824,  # Similar a Taladro
+                        'Numerado': 0.01824,    # Similar a Embalaje
+                        'Serigrafía': 0.03648,  # Parte de Impresión
+                        'Digital': 0.03648,     # Parte de Impresión
+                        'Láser': 0.01824,       # Similar a Corte
+                        'Fresado': 0.01824,     # Similar a Taladro
+                        'Plotter': 0.01824,     # Similar a Corte
+                        'Burbuja teclas': 0.01824,  # Similar a Taladro
+                        'Hendido': 0.01824,     # Similar a Corte
+                        'Plegado': 0.01824,     # Similar a Corte
+                        'Semicorte': 0.01824    # Similar a Corte
+                    }
+                    
+                    # Obtener la duración base para el proceso
+                    duracion_base = duraciones_base.get(proceso_base, 0.03648)  # Por defecto, usar el tiempo de dibujo
+                    
+                    # Calcular duración total
+                    duracion = round(cantidad * duracion_base, 3)
+                    
+                    # Asegurar una duración mínima de 0.5 días (4 horas)
+                    duracion = max(duracion, 0.5)
+                    
                     operario = "Por Asignar"
                     
                     # Verificar si el proceso ya existe
@@ -292,10 +330,8 @@ try:
     # Ejecutar planificación
     plan, makespan, status = planificar_produccion(pedidos_planificacion)
 
-    if status == cp_model.OPTIMAL:
+    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
         st.success("Se encontró una solución óptima para los 5 pedidos más urgentes")
-    elif status == cp_model.FEASIBLE:
-        st.warning("Se encontró una solución factible pero no óptima para los 5 pedidos más urgentes")
     elif status == cp_model.INFEASIBLE:
         st.error("No se encontró una solución factible para los 5 pedidos más urgentes")
         st.info("""
@@ -317,7 +353,7 @@ try:
 
     if plan:
         # Crear DataFrame para visualización
-        df = pd.DataFrame(plan, columns=['Inicio', 'OT', 'Orden_Proceso', 'Nombre', 'Duración', 'Operación', 'Subproceso', 'OT_ID', 'Operario'])
+        df = pd.DataFrame(plan, columns=['Inicio', 'OT', 'Orden_Proceso', 'Nombre', 'Cantidad', 'Duración', 'Operación', 'Subproceso', 'OT_ID', 'Operario'])
         
         # Convertir días a fechas
         df['Fecha Inicio Prevista'] = df['Inicio'].apply(lambda x: fecha_inicio + timedelta(days=x))
@@ -360,16 +396,20 @@ try:
         # Añadir fecha de entrega al DataFrame
         df['Fecha de Entrega'] = df['OT'].apply(lambda x: pd.to_datetime('2023-12-25') if str(x) == '300200' else pd.to_datetime(df_expanded[df_expanded['OT_ID_Linea'].astype(str) == str(x)]['fecha_entrega'].iloc[0]))
         
-        # Reordenar y renombrar columnas para mejor visualización
-        columnas_ordenadas = ['Estado', 'Cumplimiento', 'Fecha Inicio Prevista', 'Fecha Fin Prevista', 'Fecha de Entrega', 'OT', 'Número de Pedido', 'Nombre', 'Operación', 'Subproceso', 'Secuencia', 'Duración', 'OT_ID', 'Operario']
-        df = df[columnas_ordenadas]
-        
         # Renombrar columnas para mejor comprensión
         df = df.rename(columns={
             'Duración': 'Duración (días)',
             'Operación': 'Proceso',
             'OT_ID': 'Número de OT'
         })
+        
+        # Reordenar columnas para mejor visualización
+        columnas_ordenadas = [
+            'Estado', 'Cumplimiento', 'Fecha Inicio Prevista', 'Fecha Fin Prevista', 
+            'Fecha de Entrega', 'OT', 'Número de Pedido', 'Nombre', 'Cantidad', 
+            'Proceso', 'Subproceso', 'Secuencia', 'Duración (días)', 'Número de OT', 'Operario'
+        ]
+        df = df[columnas_ordenadas]
 
         # Filtros en la sidebar
         with st.sidebar:
@@ -648,7 +688,7 @@ try:
         columnas_ordenadas = [
             'Estado', 'Cumplimiento', 'Prioridad', 'Fecha Inicio Prevista', 'Fecha Fin Prevista', 
             'Fecha Límite Interna', 'OT', 'Número de Pedido', 'Nombre', 'Proceso', 'Subproceso', 
-            'Secuencia', 'Duración (días)', 'Número de OT', 'Operario'
+            'Secuencia', 'Duración', 'Número de OT', 'Operario'
         ]
         df = df[columnas_ordenadas]
 
