@@ -441,42 +441,28 @@ try:
         # Obtener valores únicos de Resource
         recursos_unicos = df_gantt['Resource'].unique()
         
-        # Crear diccionario de colores solo para los recursos presentes
+        # Crear diccionario de colores para los procesos
         colores_procesos = {
-            'IT01_Dibujo': '#1f77b4', # Azul
-            'IT02_Impresion': '#fdb462', # Naranja suave
-            'IT03_Corte': '#9467bd',  # Púrpura
-            'IT04_Mecanizado': '#8c564b', # Marrón
-            'IT05_Laminado': '#e377c2', # Rosa
-            'IT06_Embalaje': '#b3b3b3', # Gris más claro
-            'IT07_Taladro': '#bcbd22', # Verde oliva
-            'IT08_Barniz': '#17becf', # Cian
-            'IT09_Serigrafia': '#fb8072', # Coral
-            'IT10_Digital': '#80b1d3', # Azul claro
-            'IT11_Resina': '#ff9896', # Rojo suave
-            'IT12_Grabado': '#98df8a', # Verde suave
-            'IT13_Acabado': '#c5b0d5', # Púrpura suave
-            'IT14_Control': '#ffbb78', # Naranja suave
-            'IT15_Almacen': '#aec7e8', # Azul suave
-            'IT16_Transporte': '#c49c94', # Marrón suave
-            'IT17_Montaje': '#f7b6d2', # Rosa suave
-            'IT18_Pruebas': '#dbdb8d', # Amarillo suave
-            'IT19_Calidad': '#9edae5', # Cian suave
-            'IT20_Entrega': '#e7cb94'  # Beige suave
+            'Dibujo': '#1f77b4',      # Azul Streamlit
+            'Pantalla': '#ff7f0e',    # Naranja Streamlit
+            'Corte': '#2ca02c',       # Verde Streamlit
+            'Impresión': '#d62728',   # Rojo Streamlit
+            'Grabado': '#9467bd',     # Púrpura Streamlit
+            'Adhesivo': '#8c564b',    # Marrón Streamlit
+            'Laminado': '#e377c2',    # Rosa Streamlit
+            'Mecanizado': '#8B4513',  # Marrón sienna Streamlit
+            'Taladro': '#bcbd22',     # Verde oliva Streamlit
+            'Numerado': '#17becf',    # Cian Streamlit
+            'Embalaje': '#ff9896',    # Rojo suave Streamlit
+            'Can. Romo': '#98df8a'    # Verde suave Streamlit
         }
-
+        
         colores_actuales = {}
-        for i, recurso in enumerate(recursos_unicos):
-            # Usar un color del diccionario original si existe, o generar uno nuevo
-            if recurso in colores_procesos:
-                colores_actuales[recurso] = colores_procesos[recurso]
-            else:
-                # Generar un color aleatorio si no está en el diccionario original
-                import random
-                r = random.randint(0, 255)
-                g = random.randint(0, 255)
-                b = random.randint(0, 255)
-                colores_actuales[recurso] = f'rgb({r},{g},{b})'
+        for recurso in recursos_unicos:
+            # Usar el nombre base del proceso (sin subproceso)
+            proceso_base = recurso.split(' - ')[0] if ' - ' in recurso else recurso
+            # Buscar el color correspondiente o usar un color por defecto
+            colores_actuales[recurso] = colores_procesos.get(proceso_base, '#808080')  # Gris por defecto
 
         # Crear figura de Gantt con Plotly
         st.markdown("### Cronograma de producción")
@@ -531,7 +517,26 @@ try:
         
         # Mostrar tabla de detalles filtrada
         st.markdown("### Detalles por pedido")
-        st.dataframe(df_filtrado, hide_index=True)
+        
+        # Definir los estilos para cada estado
+        def color_row(row):
+            # Primero verificamos si está fuera de plazo
+            if row['Cumplimiento'] == 'Fuera de Plazo':
+                return ['background-color: #FFE4E1'] * len(row)  # Rojo suave
+            
+            # Si no está fuera de plazo, aplicamos los colores según el estado
+            if row['Estado'] == 'Planificado Finalizado':
+                return ['background-color: #E6F3FF'] * len(row)  # Azul suave
+            elif row['Estado'] == 'Activado':
+                return ['background-color: #FFF8DC'] * len(row)  # Amarillo suave
+            elif row['Estado'] == 'Listo para Activar':
+                return ['background-color: #E0FFF0'] * len(row)  # Verde suave
+            else:  # Pendiente
+                return [''] * len(row)
+        
+        # Aplicar los estilos a la tabla
+        styled_df = df_filtrado.style.apply(color_row, axis=1)
+        st.dataframe(styled_df, hide_index=True)
         
         # Métricas principales
         col1, col2, col3 = st.columns(3)
