@@ -74,7 +74,8 @@ try:
 
     # Definir fecha de inicio y actual
     fecha_inicio = datetime(2024, 1, 1)  # Fecha base fija
-    fecha_actual = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    # fecha_actual = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    fecha_actual = datetime(2024, 1, 1)  # Fecha simulada para ver diferentes estados
 
     # Sidebar para entrada de datos
     with st.sidebar:
@@ -116,11 +117,14 @@ try:
         if pedido_id not in pedidos:
             # Calcular días hasta la entrega desde la fecha base
             fecha_entrega = pd.to_datetime(row['fecha_entrega'])
+            if str(row['OT_ID_Linea']) == '300200':
+                fecha_entrega = pd.to_datetime('2023-12-25')
             dias_hasta_entrega = (fecha_entrega - fecha_inicio).days
             
-            # Asegurar que la fecha sea positiva
-            if dias_hasta_entrega < 0:
-                dias_hasta_entrega = 0
+            # Asegurar que la fecha sea positiva y tenga un mínimo de días para planificar
+            dias_minimos_planificacion = 5  # Mínimo de días para planificar cualquier pedido
+            if dias_hasta_entrega < dias_minimos_planificacion:
+                dias_hasta_entrega = dias_minimos_planificacion
             
             pedidos[pedido_id] = {
                 "nombre": row['nombre'],
@@ -328,13 +332,20 @@ try:
                 return 'Planificado Finalizado'
             elif row['Fecha Inicio Prevista'] <= fecha_actual <= row['Fecha Fin Prevista']:
                 return 'Activado'
-            elif row['Orden_Proceso'] == 0 or all(df[(df['OT'] == row['OT']) & (df['Orden_Proceso'] < row['Orden_Proceso'])]['Fecha Fin Prevista'] <= fecha_actual):
+            elif row['Orden_Proceso'] == 0 or all(
+                (df[(df['OT'] == row['OT']) & (df['Orden_Proceso'] < row['Orden_Proceso'])]['Fecha Inicio Prevista'] <= fecha_actual)
+            ):
                 return 'Listo para Activar'
             else:
                 return 'Pendiente'
 
         def determinar_cumplimiento(row: pd.Series) -> str:
-            fecha_limite = fecha_inicio + timedelta(days=pedidos[str(row['OT'])]['fecha_entrega'])
+            # Obtener la fecha de entrega original del pedido
+            fecha_entrega_original = pd.to_datetime(df_expanded[df_expanded['OT_ID_Linea'].astype(str) == str(row['OT'])]['fecha_entrega'].iloc[0])
+            # Si es la OT 300200, usar la fecha modificada
+            if str(row['OT']) == '300200':
+                fecha_entrega_original = pd.to_datetime('2023-12-25')
+            fecha_limite = fecha_entrega_original
             if row['Fecha Fin Prevista'] > fecha_limite:
                 return 'Fuera de Plazo'
             else:
