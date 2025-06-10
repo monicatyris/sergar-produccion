@@ -24,6 +24,7 @@ from utils import (
 
 from processing.transformations import process_data
 from bigquery.uploader import load_sales_orders, load_sales_orders_table
+import streamlit.components.v1 as components
 
 # Cargar variables de entorno
 load_dotenv()
@@ -123,7 +124,7 @@ try:
             dias_hasta_entrega = (fecha_entrega - fecha_inicio).days
             
             # Asegurar que la fecha sea positiva y tenga un mínimo de días para planificar
-            dias_minimos_planificacion = 20  # Mínimo de días para planificar cualquier pedido
+            dias_minimos_planificacion = 365  # Mínimo de días para planificar cualquier pedido
             if dias_hasta_entrega < dias_minimos_planificacion:
                 dias_hasta_entrega = dias_minimos_planificacion
             
@@ -238,7 +239,7 @@ try:
     
     # Obtener los números de pedido únicos de los 10 más urgentes
     pedidos_urgentes = set()
-    for pedido_id, _ in pedidos_ordenados[:10]:
+    for pedido_id, _ in pedidos_ordenados[:10]:  # Cambiado de 50 a 10
         # Buscar el número de pedido correspondiente a este OT
         numero_pedido = df_expanded[df_expanded['OT_ID_Linea'].astype(str) == str(pedido_id)]['numero_pedido'].iloc[0]
         pedidos_urgentes.add(numero_pedido)
@@ -602,6 +603,14 @@ try:
         # Crear figura de Gantt con Plotly
         if mostrar_gantt:
             st.markdown("### Cronograma de producción")
+            
+            # Calcular altura dinámica basada en el número de tareas
+            altura_base = 600  # altura base en píxeles
+            altura_por_tarea = 50  # Aumentado de 30 a 50 para dar más espacio
+            altura_minima = 400  # altura mínima en píxeles
+            altura_maxima = 2000  # Aumentado para permitir más espacio vertical
+            altura_calculada = min(max(altura_base + (len(df_gantt) * altura_por_tarea), altura_minima), altura_maxima)
+            
             fig = ff.create_gantt(df_gantt,
                                 index_col='Resource',
                                 show_colorbar=True,
@@ -610,11 +619,12 @@ try:
                                 showgrid_y=True,
                                 title='',
                                 bar_width=0.4,
-                                colors=colores_actuales)
+                                colors=colores_actuales,
+                                show_hover_fill=True)
 
             # Configurar el layout del gráfico
             fig.update_layout(
-                height=600,
+                height=altura_calculada,
                 xaxis_title="Fechas",
                 yaxis_title="Operaciones",
                 showlegend=True,
@@ -622,24 +632,37 @@ try:
                     type='date',
                     showgrid=True,
                     gridwidth=1,
-                    gridcolor='LightGrey'
+                    gridcolor='LightGrey',
+                    rangeslider=dict(visible=False),  # Desactivar el rangeslider
+                    range=[df_gantt['Start'].min(), df_gantt['Finish'].max()],  # Establecer el rango de fechas
+                    rangeselector=dict(visible=False)   # Ocultar los botones de rango
                 ),
                 yaxis=dict(
                     showgrid=True,
                     gridwidth=1,
                     gridcolor='LightGrey',
-                    tickangle=45,
-                    tickfont=dict(size=10)
+                    tickangle=0,  # Ángulo de las etiquetas
+                    tickfont=dict(size=11),  # Tamaño de la fuente
+                    automargin=True,  # Ajuste automático de márgenes
+                    side='left',  # Asegurar que las etiquetas estén a la izquierda
+                    dtick=1  # Mostrar todas las etiquetas
                 ),
-                margin=dict(l=250, r=50, t=50, b=50),
+                margin=dict(l=300, r=50, t=50, b=50),  # Reducido el margen izquierdo ya que las etiquetas son más cortas
                 font=dict(
                     family="Roboto, sans-serif",
                     size=12
                 )
             )
-            
-            # Mostrar gráfico
-            st.plotly_chart(fig, use_container_width=True)
+
+            # Convertir a HTML y mostrarlo en un iframe scrollable
+            html_gantt = fig.to_html(
+                full_html=False,
+                include_plotlyjs="cdn",
+                config={"displayModeBar": True}
+            )
+
+            # Mostrar el gráfico en un iframe con scroll
+            components.html(html_gantt, height=600, scrolling=True)
         
         # Mostrar tabla de detalles filtrada
         st.markdown("### Detalles por OT")
