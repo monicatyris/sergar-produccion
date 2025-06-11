@@ -5,8 +5,31 @@ from datetime import datetime, timedelta
 import json
 from ortools_sergar import planificar_produccion
 import plotly.graph_objects as go
+from google.cloud import bigquery
+import os
+from ortools.sat.python import cp_model
+from dotenv import load_dotenv
+from typing import Dict, List, Tuple, Any
+from utils import (
+    procesar_nombre_proceso,
+    completar_datos_procesos,
+    calcular_fechas_limite_internas,
+    calcular_prioridad,
+    MAPEO_PROCESOS,
+    MAPEO_SUBPROCESOS,
+    SECUENCIA_PROCESOS,
+    SUBPROCESOS_VALIDOS,
+    COSTES_PROCESOS
+)
 
-# Configuración de la página para layout responsive
+from processing.transformations import process_data
+from bigquery.uploader import load_sales_orders, load_sales_orders_table
+import streamlit.components.v1 as components
+
+# Cargar variables de entorno
+load_dotenv()
+
+# Configuración de la página (debe ser el primer comando de Streamlit)
 st.set_page_config(
     page_title="Panel de Producción",
     page_icon="📊",
@@ -14,366 +37,759 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilos CSS para mejorar la visualización
-st.markdown("""
-    <style>
-        /* Eliminar barras de desplazamiento */
-        .main .block-container {
-            padding-top: 0.5rem;
-            padding-bottom: 0.5rem;
-            padding-left: 1rem;
-            padding-right: 1rem;
-            max-width: 100%;
-        }
-        
-        /* Ajustar sidebar */
-        .css-1d391kg {
-            padding-top: 0.5rem;
-            padding-bottom: 0.5rem;
-        }
-        
-        /* Ajustar altura de elementos */
-        .stDataFrame {
-            width: 100%;
-            height: calc(100vh - 500px);
-            overflow: auto;
-        }
-        
-        /* Ajustar altura del gráfico Gantt */
-        .element-container:has(> .stPlotlyChart) {
-            height: calc(100vh - 300px);
-        }
-        
-        /* Ajustar espaciado entre elementos */
-        .element-container {
-            margin-bottom: 0.25rem;
-        }
-        
-        /* Ajustar tamaño de fuente */
-        .stMarkdown h3 {
-            margin-top: 0.5rem;
-            margin-bottom: 0.5rem;
-        }
-        
-        /* Ajustar botones y controles */
-        .stButton > button {
-            width: 100%;
-        }
-        
-        /* Ajustar multiselect */
-        .stMultiSelect {
-            max-height: 100px;
-        }
-        
-        /* Ocultar barras de desplazamiento pero mantener funcionalidad */
-        ::-webkit-scrollbar {
-            display: none;
-        }
-        
-        /* Ajustar tabla de datos */
-        .dataframe {
-            font-size: 0.9em;
-        }
-        
-        /* Ajustar contenedor principal */
-        .main .block-container {
-            max-width: 100%;
-            padding-left: 1rem;
-            padding-right: 1rem;
-        }
-    </style>
-""", unsafe_allow_html=True)
+# Configuración de BigQuery desde variables de entorno
+PROJECT_ID = os.getenv('BIGQUERY_PROJECT_ID')
+DATASET_ID = os.getenv('BIGQUERY_DATASET_ID')
+TABLE_NAME = os.getenv('BIGQUERY_TABLE_NAME')
+TABLE_NAME_SALES_ORDERS = os.getenv('BIGQUERY_TABLE_NAME_SALES_ORDERS', 'sales_orders')
+TABLE_ID = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME}"
+CREDENTIALS_PATH = os.getenv('BIGQUERY_CREDENTIALS_PATH')
 
-# Título y descripción
-st.title("📊 Panel de Producción")
-st.markdown("""
-Este panel muestra el cronograma de producción indicando el estado de los pedidos, procesos, etapas y fechas de entrega.
-""")
-
-# Definir fecha de inicio y actual
-fecha_inicio = datetime(2024, 9, 26)
-fecha_actual = datetime(2024, 9, 26)
-
-# Sidebar para entrada de datos
-with st.sidebar:
-    st.image("logo-sergar.png")
+# Crear cliente de BigQuery desde el archivo de credenciales
+try:
+    client = bigquery.Client.from_service_account_json(CREDENTIALS_PATH, location="europe-southwest1")
     
-    # Opción para cargar pedidos desde JSON
-    st.subheader("Cargar Pedidos")
-    uploaded_file = st.file_uploader("Cargar archivo JSON de pedidos", type=['json'])
-    
-    # Definir lista de subprocesos válidos
-    SUBPROCESOS_VALIDOS = {
-        'Dibujo': ['Dibujo Técnico', 'Dibujo Artístico', 'Dibujo Vectorial'],
-        'Impresión': ['Impresión Digital', 'Impresión Offset', 'Impresión Serigráfica'],
-        'Corte': ['Corte Láser', 'Corte CNC', 'Corte Manual'],
-        'Mecanizado': ['Fresado', 'Torneado', 'Taladrado'],
-        'Laminado': ['Laminado Manual', 'Laminado Automático'],
-        'Embalaje': ['Embalaje Manual', 'Embalaje Automático'],
-        'Taladro': ['Taladro Manual', 'Taladro CNC'],
-        'Barniz': ['Barniz Manual', 'Barniz Automático'],
-        'Serigrafía': ['Serigrafía Manual', 'Serigrafía Automática'],
-        'Digital': ['Digitalización', 'Edición Digital']
-    }
+    # Realizar la consulta
+    query = f'SELECT * FROM `{TABLE_ID}`'
+    query_job = client.query(query)
+    results = query_job.result()
 
-    # Función para completar los datos de los procesos
-    def completar_datos_procesos(pedidos):
-        for pedido, data in pedidos.items():
-            procesos_completos = []
-            for proceso_info in data['procesos']:
-                proceso = proceso_info[0]
-                duracion = proceso_info[1]
-                subproceso = SUBPROCESOS_VALIDOS.get(proceso, ['Sin Especificar'])[0]
-                ot = f"OT-{pedido}-{len(procesos_completos)+1}"
-                operario = "Por Asignar"
-                procesos_completos.append([proceso, duracion, subproceso, ot, operario])
-            data['procesos'] = procesos_completos
-        return pedidos
+    # Convertir resultados a DataFrame
+    df = results.to_dataframe()
 
-    # Modificar la carga de pedidos
-    if uploaded_file is not None:
-        try:
-            pedidos = json.load(uploaded_file)
-            pedidos = completar_datos_procesos(pedidos)
-            st.success("Archivo cargado correctamente")
-        except:
-            st.error("Error al cargar el archivo")
-            with open('pedidos_actualizados.json', 'r', encoding='utf-8') as f:
-                pedidos = json.load(f)
-                pedidos = completar_datos_procesos(pedidos)
-    else:
-        with open('pedidos_actualizados.json', 'r', encoding='utf-8') as f:
-            pedidos = json.load(f)
-            pedidos = completar_datos_procesos(pedidos)
+    # Expandir el campo articulos
+    df = df.explode('articulos')
 
-# Ejecutar planificación
-plan, makespan, status = planificar_produccion(pedidos)
+    # Convertir la columna articulos de string a diccionario si es necesario
+    if isinstance(df['articulos'].iloc[0], str):
+        df['articulos'] = df['articulos'].apply(json.loads)
 
-if plan:
-    # Crear DataFrame para visualización
-    df = pd.DataFrame(plan, columns=['Inicio', 'Pedido', 'Orden_Proceso', 'Nombre', 'Duración', 'Operación', 'Subproceso', 'OT', 'Operario'])
-    
-    # Convertir días a fechas
-    df['Fecha Inicio'] = df['Inicio'].apply(lambda x: fecha_inicio + timedelta(days=x))
-    df['Fecha Fin'] = df.apply(lambda row: row['Fecha Inicio'] + timedelta(days=row['Duración']), axis=1)
-    
-    # Añadir información de secuencia de procesos
-    df['Secuencia'] = df.apply(lambda row: f"Paso {row['Orden_Proceso'] + 1} de {len(pedidos[str(row['Pedido'])]['procesos'])}", axis=1)
-    
-    # Determinar el estado de cada proceso
-    def determinar_estado(row):
-        if row['Fecha Fin'] < fecha_actual:
-            return 'Finalizado'
-        elif row['Fecha Inicio'] <= fecha_actual <= row['Fecha Fin']:
-            return 'En Proceso'
-        elif row['Orden_Proceso'] == 0 or all(df[(df['Pedido'] == row['Pedido']) & (df['Orden_Proceso'] < row['Orden_Proceso'])]['Fecha Fin'] <= fecha_actual):
-            return 'Listo para Activar'
-        else:
-            return 'Pendiente'
+    # Crear un nuevo DataFrame con los datos expandidos
+    df_expanded = pd.json_normalize(df['articulos'])
 
-    def determinar_cumplimiento(row):
-        fecha_limite = fecha_inicio + timedelta(days=pedidos[str(row['Pedido'])]['fecha_entrega'])
-        if row['Fecha Fin'] > fecha_limite:
-            return 'Fuera de Plazo'
-        else:
-            return 'En Plazo'
+    # Añadir la fecha de entrega y el número de pedido del DataFrame original
+    df_expanded['fecha_entrega'] = df['fecha_entrega'].values
+    df_expanded['numero_pedido'] = df['numero_pedido'].values
 
-    df['Estado'] = df.apply(determinar_estado, axis=1)
-    df['Cumplimiento'] = df.apply(determinar_cumplimiento, axis=1)
-    
-    # Reordenar y renombrar columnas para mejor visualización
-    columnas_ordenadas = ['Estado', 'Cumplimiento', 'Fecha Inicio', 'Fecha Fin', 'Pedido', 'Nombre', 'Operación', 'Subproceso', 'Secuencia', 'Duración', 'OT', 'Operario']
-    df = df[columnas_ordenadas]
-    
-    # Renombrar columnas para mejor comprensión
-    df = df.rename(columns={
-        'Duración': 'Duración (días)',
-        'Operación': 'Proceso',
-        'OT': 'Número de OT'
-    })
 
-    # Filtros en la sidebar
+    # Guardar df_expanded en un archivo CSV para revisión
+    df_expanded.to_csv('df_expanded.csv', index=False, encoding='utf-8')
+
+    # Definir fecha de inicio y actual
+    fecha_inicio = datetime(2023, 12, 28)  # Fecha base fija
+    # fecha_actual = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    fecha_actual = datetime(2024, 1, 1)  # Fecha simulada para ver diferentes estados
+
+    # Sidebar para entrada de datos
     with st.sidebar:
-        st.subheader("Filtrar")
-        
-        # Botón para limpiar filtros
-        if st.button("🗑️ Limpiar filtros", help="Elimina todos los filtros aplicados"):
-            for key in ['pedidos_filtro', 'procesos_filtro', 'subprocesos_filtro', 'estados_filtro', 'cumplimiento_filtro']:
-                if key in st.session_state:
-                    st.session_state[key] = []
-            st.rerun()
-        
-        # Inicializar filtros en session_state si no existen
-        for key in ['pedidos_filtro', 'procesos_filtro', 'subprocesos_filtro', 'estados_filtro', 'cumplimiento_filtro']:
-            if key not in st.session_state:
-                st.session_state[key] = []
-        
-        pedidos_filtro = st.multiselect(
-            "Número de pedido",
-            options=sorted(df['Pedido'].unique()),
-            key='pedidos_filtro'
-        )
-        
-        # Obtener procesos disponibles según los pedidos seleccionados
-        if pedidos_filtro:
-            df_filtrado = df[df['Pedido'].isin(pedidos_filtro)]
-            procesos_disponibles = df_filtrado['Proceso'].unique()
-        else:
-            df_filtrado = df
-            procesos_disponibles = df['Proceso'].unique()
-        
-        procesos_filtro = st.multiselect(
-            "Proceso",
-            options=sorted(procesos_disponibles),
-            key='procesos_filtro'
-        )
-        
-        # Actualizar df_filtrado con los procesos seleccionados
-        if procesos_filtro:
-            df_filtrado = df_filtrado[df_filtrado['Proceso'].isin(procesos_filtro)]
-        
-        # Obtener subprocesos disponibles según los procesos seleccionados
-        subprocesos_disponibles = []
-        if procesos_filtro:
-            for proceso in procesos_filtro:
-                subprocesos_disponibles.extend(SUBPROCESOS_VALIDOS.get(proceso, ['Sin Especificar']))
-        else:
-            subprocesos_disponibles = df_filtrado['Subproceso'].unique()
-        
-        subprocesos_filtro = st.multiselect(
-            "Subproceso",
-            options=sorted(subprocesos_disponibles),
-            key='subprocesos_filtro'
-        )
-        
-        # Actualizar df_filtrado con los subprocesos seleccionados
-        if subprocesos_filtro:
-            df_filtrado = df_filtrado[df_filtrado['Subproceso'].isin(subprocesos_filtro)]
-        
-        # Obtener estados disponibles según los filtros anteriores
-        estados_disponibles = df_filtrado['Estado'].unique()
-        
-        estados_filtro = st.multiselect(
-            "Estado del pedido",
-            options=sorted(estados_disponibles),
-            key='estados_filtro'
-        )
-        
-        # Actualizar df_filtrado con los estados seleccionados
-        if estados_filtro:
-            df_filtrado = df_filtrado[df_filtrado['Estado'].isin(estados_filtro)]
-        
-        # Obtener cumplimientos disponibles según los filtros anteriores
-        cumplimientos_disponibles = df_filtrado['Cumplimiento'].unique()
-        
-        cumplimiento_filtro = st.multiselect(
-            "Cumplimiento de la entrega",
-            options=sorted(cumplimientos_disponibles),
-            key='cumplimiento_filtro'
-        )
+        st.image("logo-sergar.png")
 
-    # Crear DataFrame para Gantt con datos filtrados
-    if len(df_filtrado) == 0:
-        st.error("""
-        **No se encontraron resultados para los filtros aplicados**
+        # Opción para cargar pedidos desde Excel
+        st.subheader("Cargar Pedidos en Exel")
+        uploaded_excel_file = st.file_uploader("Cargar archivo Excel de pedidos", type=['xlsx'])
+        if uploaded_excel_file is not None:
+            try:
+                df = pd.read_excel(uploaded_excel_file, decimal=",", date_format="%d/%m/%Y")
+                orders_list = process_data(df)
+                load_sales_orders(orders_list, CREDENTIALS_PATH, TABLE_ID) 
+                load_sales_orders_table(df, CREDENTIALS_PATH, PROJECT_ID, DATASET_ID, TABLE_NAME_SALES_ORDERS)
+                st.success("Archivo Excel cargado correctamente")
+            except Exception as e:
+                st.error(f"Error al cargar el archivo Excel: {str(e)}")
+
+    # Procesar los datos para la planificación
+    pedidos: Dict[str, Dict[str, Any]] = {}
+    procesos_unicos: set = set()
+    
+    # Contadores para depuración
+    total_articulos = 0
+    articulos_servidos = 0
+    articulos_planificados = 0
+    
+    for _, row in df_expanded.iterrows():
+        total_articulos += 1
         
-        Modifica uno o más filtros para ampliar los resultados de tu búsqueda.
+        # Verificar si el artículo está totalmente servido
+        if row.get('servido') == 'Totalmente servido':
+            articulos_servidos += 1
+            continue  # Saltar este artículo si está totalmente servido
+            
+        articulos_planificados += 1
+        pedido_id = str(row['OT_ID_Linea'])
+        
+        if pedido_id not in pedidos:
+            # Calcular días hasta la entrega desde la fecha base
+            fecha_entrega = pd.to_datetime(row['fecha_entrega'])
+            if str(row['OT_ID_Linea']) == '300200':
+                fecha_entrega = pd.to_datetime('2023-12-25')
+            dias_hasta_entrega = (fecha_entrega - fecha_inicio).days
+            
+            # Asegurar que la fecha sea positiva y tenga un mínimo de días para planificar
+            dias_minimos_planificacion = 365  # Mínimo de días para planificar cualquier pedido
+            if dias_hasta_entrega < dias_minimos_planificacion:
+                dias_hasta_entrega = dias_minimos_planificacion
+            
+            pedidos[pedido_id] = {
+                "nombre": row['nombre'],
+                "cantidad": row['cantidad'],
+                "fecha_entrega": dias_hasta_entrega,
+                "procesos": []
+            }
+        
+        # Procesar los procesos IT
+        procesos_especificos = {}  # Diccionario para agrupar procesos por tipo
+        for key, value in row.items():
+            if key.startswith('IT'):
+                # Separar el proceso y subproceso del nombre de la columna
+                if '.' in key:
+                    proceso, subproceso = key.split('.')
+                    if subproceso == '_':
+                        # Si es un proceso sin subproceso específico
+                        nombre_completo = proceso
+                        subproceso = "Sin Subproceso"
+                    else:
+                        nombre_completo = f"{proceso} {subproceso}"
+                else:
+                    # Si es un proceso simple sin subproceso
+                    nombre_completo = key
+                    subproceso = "Sin Subproceso"
+
+                # Solo incluir procesos que estén "En espera"
+                if pd.notna(value) and value == "En espera":
+                    # Obtener el nombre base del proceso (sin subproceso)
+                    proceso_base = nombre_completo.split()[0]
+                    
+                    # Agrupar por proceso base
+                    if proceso_base not in procesos_especificos:
+                        procesos_especificos[proceso_base] = []
+                    
+                    procesos_especificos[proceso_base].append({
+                        'nombre_completo': nombre_completo,
+                        'subproceso': subproceso,
+                        'ot': row.get('OT_ID_Linea', 'Sin OT')
+                    })
+
+        # Procesar los procesos agrupados
+        for proceso_base, procesos in procesos_especificos.items():
+            # Si hay procesos específicos (no "Sin Subproceso"), eliminar el genérico
+            tiene_especificos = any(p['subproceso'] != "Sin Subproceso" for p in procesos)
+            
+            for proceso in procesos:
+                # Si hay específicos, solo incluir los que no son genéricos
+                if not tiene_especificos or proceso['subproceso'] != "Sin Subproceso":
+                    procesos_unicos.add(proceso['nombre_completo'])
+                    # Calcular duración basada en la cantidad y el tipo de proceso
+                    proceso_base = proceso['nombre_completo'].split()[0]
+                    cantidad = row['cantidad']
+                    
+                    # Duración base por unidad según el proceso (en días)
+                    duraciones_base = {
+                        'Dibujo': 0.03648,      # 3.648 días para 100 unidades
+                        'Impresión': 0.07296,   # 7.296 días para 100 unidades (Digital + Serigrafía)
+                        'Taladro': 0.01824,     # 1.824 días para 100 unidades
+                        'Corte': 0.01824,       # 1.824 días para 100 unidades
+                        'Canteado': 0.01824,    # 1.824 días para 100 unidades
+                        'Embalaje': 0.01824,    # 1.824 días para 100 unidades
+                        'Pantalla': 0.03648,    # Similar a Dibujo
+                        'Grabado': 0.03648,     # Similar a Dibujo
+                        'Adhesivo': 0.01824,    # Similar a Corte
+                        'Laminado': 0.01824,    # Similar a Corte
+                        'Mecanizado': 0.01824,  # Similar a Taladro
+                        'Numerado': 0.01824,    # Similar a Embalaje
+                        'Serigrafía': 0.03648,  # Parte de Impresión
+                        'Digital': 0.03648,     # Parte de Impresión
+                        'Láser': 0.01824,       # Similar a Corte
+                        'Fresado': 0.01824,     # Similar a Taladro
+                        'Plotter': 0.01824,     # Similar a Corte
+                        'Burbuja teclas': 0.01824,  # Similar a Taladro
+                        'Hendido': 0.01824,     # Similar a Corte
+                        'Plegado': 0.01824,     # Similar a Corte
+                        'Semicorte': 0.01824    # Similar a Corte
+                    }
+                    
+                    # Obtener la duración base para el proceso
+                    duracion_base = duraciones_base.get(proceso_base, 0.03648)  # Por defecto, usar el tiempo de dibujo
+                    
+                    # Calcular duración total
+                    duracion = round(cantidad * duracion_base, 3)
+                    
+                    # Asegurar una duración mínima de 0.5 días (4 horas)
+                    duracion = max(duracion, 0.5)
+                    
+                    operario = "Por Asignar"
+                    
+                    # Verificar si el proceso ya existe
+                    if not any(p[0] == proceso['nombre_completo'] and p[2] == proceso['subproceso'] 
+                             for p in pedidos[pedido_id]["procesos"]):
+                        pedidos[pedido_id]["procesos"].append([
+                            proceso['nombre_completo'],  # nombre completo del proceso
+                            duracion,                   # duracion
+                            proceso['subproceso'],      # subproceso
+                            proceso['ot'],             # ot (ID Linea)
+                            operario                   # operario
+                        ])
+        
+        # Procesar los nombres de procesos y subprocesos
+        pedidos[pedido_id]["procesos"] = completar_datos_procesos({pedido_id: pedidos[pedido_id]})[pedido_id]["procesos"]
+        
+        # Ordenar los procesos según la secuencia predefinida
+        pedidos[pedido_id]["procesos"].sort(key=lambda x: SECUENCIA_PROCESOS.get(x[0], 999))
+
+    # Ordenar pedidos por fecha de entrega y seleccionar los 10 más urgentes
+    pedidos_ordenados = sorted(pedidos.items(), key=lambda x: x[1]['fecha_entrega'])
+    
+    # Obtener los números de pedido únicos de los 10 más urgentes
+    pedidos_urgentes = set()
+    for pedido_id, _ in pedidos_ordenados[:10]:  # Cambiado de 50 a 10
+        # Buscar el número de pedido correspondiente a este OT
+        numero_pedido = df_expanded[df_expanded['OT_ID_Linea'].astype(str) == str(pedido_id)]['numero_pedido'].iloc[0]
+        pedidos_urgentes.add(numero_pedido)
+    
+    # Incluir todos los OTs que pertenecen a estos pedidos
+    pedidos_planificacion = {}
+    for pedido_id, data in pedidos.items():
+        numero_pedido = df_expanded[df_expanded['OT_ID_Linea'].astype(str) == str(pedido_id)]['numero_pedido'].iloc[0]
+        if numero_pedido in pedidos_urgentes:
+            pedidos_planificacion[pedido_id] = data
+
+    # DEBUG: Checkbox en el sidebar
+    with st.sidebar:
+        st.subheader("🔧 Opciones de Depuración")
+        debug_mode = st.checkbox("Modo Depuración", value=False)
+
+    # DEBUG: Información de depuración en la página principal
+    if debug_mode:
+        st.subheader("🔍 Información de Depuración")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("### Pedidos en planificación")
+            try:
+                pedidos_keys = list(pedidos_planificacion.keys())
+                st.write("OTs en planificación:", pedidos_keys)
+                st.write("Números de pedido únicos:", list(pedidos_urgentes))
+            except Exception as e:
+                st.error(f"Error al mostrar pedidos: {str(e)}")
+                st.write("pedidos_planificacion:", pedidos_planificacion)
+            
+            st.write("### Columnas disponibles")
+            try:
+                st.write(df_expanded.columns.tolist())
+            except Exception as e:
+                st.error(f"Error al mostrar columnas: {str(e)}")
+            
+            st.write("### Filtrado de artículos")
+            st.write(f"Total de artículos: {total_articulos}")
+            st.write(f"Artículos totalmente servidos: {articulos_servidos}")
+            st.write(f"Artículos para planificar: {articulos_planificados}")
+        
+        with col2:
+            st.write("### IDs en df_expanded")
+            try:
+                ids_unicos = df_expanded['OT_ID_Linea'].unique().tolist()
+                st.write(ids_unicos)
+            except Exception as e:
+                st.error(f"Error al mostrar IDs: {str(e)}")
+                st.write("df_expanded:", df_expanded)
+        
+        st.write("### Datos de los pedidos en planificación")
+        try:
+            df_expanded['OT_ID_Linea'] = df_expanded['OT_ID_Linea'].astype(str)
+            df_planificacion = df_expanded[df_expanded['OT_ID_Linea'].isin(pedidos_planificacion.keys())]
+            
+            if not df_planificacion.empty:
+                st.dataframe(
+                    df_planificacion,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "OT_ID_Linea": st.column_config.TextColumn("OT ID", width="small"),
+                        "nombre": st.column_config.TextColumn("Nombre", width="large"),
+                        "cantidad": st.column_config.NumberColumn("Cantidad", width="small"),
+                        "importe": st.column_config.NumberColumn("Importe", width="small", format="%.2f €"),
+                        "fecha_entrega": st.column_config.DateColumn("Fecha Entrega", width="medium", format="DD/MM/YYYY")
+                    }
+                )
+            else:
+                st.warning("No se encontraron datos para los pedidos seleccionados")
+                st.write("IDs en pedidos_planificacion:", list(pedidos_planificacion.keys()))
+                st.write("IDs en df_expanded:", df_expanded['OT_ID_Linea'].unique().tolist())
+        except Exception as e:
+            st.error(f"Error al mostrar datos de planificación: {str(e)}")
+            st.write("Estado de los datos:")
+            st.write("df_expanded shape:", df_expanded.shape if hasattr(df_expanded, 'shape') else "No disponible")
+            st.write("pedidos_planificacion:", pedidos_planificacion)
+
+    # Imprimir en la ventana principal los pedidos en planificación en formato de tabla if debug_mode
+    if debug_mode:
+        st.write("Pedidos para hacer la planificación:")
+        try:
+            st.dataframe(pedidos_planificacion, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error al mostrar tabla de planificación: {str(e)}")
+            st.write("Contenido de pedidos_planificacion:", pedidos_planificacion)
+
+    # Ejecutar planificación
+    plan, makespan, status = planificar_produccion(pedidos_planificacion)
+
+    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
+        st.success("Se encontró una solución óptima para los 10 pedidos más urgentes")
+    elif status == cp_model.INFEASIBLE:
+        st.error("No se encontró una solución factible para los 10 pedidos más urgentes")
+        st.info("""
+        Posibles razones:
+        1. Las fechas de entrega son demasiado cercanas
+        2. La duración de los procesos es mayor que el tiempo disponible
+        3. Hay conflictos en la secuencia de procesos
         """)
-        st.stop()
+    elif status == cp_model.MODEL_INVALID:
+        st.error("El modelo es inválido para los 10 pedidos más urgentes")
+        st.info("""
+        Posibles razones:
+        1. Variables no definidas correctamente
+        2. Restricciones contradictorias
+        3. Valores de entrada inválidos
+        """)
+    else:
+        st.error(f"Estado desconocido: {status}")
 
-    df_gantt = pd.DataFrame({
-        'Task': [f"{row['Pedido']} - {row['Proceso']}" for _, row in df_filtrado.iterrows()],
-        'Start': [row['Fecha Inicio'] for _, row in df_filtrado.iterrows()],
-        'Finish': [row['Fecha Fin'] for _, row in df_filtrado.iterrows()],
-        'Resource': [row['Proceso'] for _, row in df_filtrado.iterrows()]
-    })
-    
-    # Definir colores fijos para cada tipo de proceso
-    colores_procesos = {
-        'Dibujo': '#1f77b4',      # Azul
-        'Impresión': '#fdb462',   # Naranja suave
-        'Corte': '#9467bd',       # Púrpura
-        'Mecanizado': '#8c564b',  # Marrón
-        'Laminado': '#e377c2',    # Rosa
-        'Embalaje': '#b3b3b3',    # Gris más claro
-        'Taladro': '#bcbd22',     # Verde oliva
-        'Barniz': '#17becf',      # Cian
-        'Serigrafía': '#fb8072',  # Coral
-        'Digital': '#80b1d3'      # Azul claro
-    }
-    
-    # Crear figura de Gantt con Plotly
-    st.markdown("### Cronograma de producción")
-    fig = ff.create_gantt(df_gantt,
-                         index_col='Resource',
-                         show_colorbar=True,
-                         group_tasks=True,
-                         showgrid_x=True,
-                         showgrid_y=True,
-                         title='',
-                         bar_width=0.4)
-    
-    # Configurar el layout del gráfico
-    fig.update_layout(
-        height=600,
-        xaxis_title="Fechas",
-        yaxis_title="Operaciones",
-        showlegend=True,
-        xaxis=dict(
-            type='date',
-            showgrid=True,
-            gridwidth=1,
-            gridcolor='LightGrey',
-            rangeselector=dict(
-                buttons=list([
-                    dict(count=7, label="1 Semana", step="day", stepmode="backward"),
-                    dict(count=1, label="1 Mes", step="month", stepmode="backward"),
-                    dict(count=6, label="6 Meses", step="month", stepmode="backward"),
-                    dict(count=1, label="Año actual", step="year", stepmode="todate"),
-                    dict(count=1, label="1 Año", step="year", stepmode="backward"),
-                    dict(step="all", label="Todo")
-                ])
+    if plan:
+        # Crear DataFrame para visualización
+        df = pd.DataFrame(plan, columns=['Inicio', 'OT', 'Orden_Proceso', 'Nombre', 'Cantidad', 'Duración', 'Operación', 'Subproceso', 'OT_ID', 'Operario'])
+        
+        # Convertir días a fechas
+        df['Fecha Inicio Prevista'] = df['Inicio'].apply(lambda x: fecha_inicio + timedelta(days=x))
+        df['Fecha Fin Prevista'] = df.apply(lambda row: row['Fecha Inicio Prevista'] + timedelta(days=row['Duración']), axis=1)
+        
+        # Añadir información de secuencia de procesos
+        df['Secuencia'] = df.apply(lambda row: f"Paso {row['Orden_Proceso'] + 1} de {len(pedidos[str(row['OT'])]['procesos'])}", axis=1)
+        
+        # Determinar el estado de cada proceso
+        def determinar_estado_planificacion(row: pd.Series) -> str:
+            if row['Fecha Fin Prevista'] < fecha_actual:
+                return 'Planificado Finalizado'
+            elif row['Fecha Inicio Prevista'] <= fecha_actual <= row['Fecha Fin Prevista']:
+                return 'Activado'
+            elif row['Orden_Proceso'] == 0 or all(
+                (df[(df['OT'] == row['OT']) & (df['Orden_Proceso'] < row['Orden_Proceso'])]['Fecha Inicio Prevista'] <= fecha_actual)
+            ):
+                return 'Listo para Activar'
+            else:
+                return 'Pendiente'
+
+        def determinar_cumplimiento(row: pd.Series) -> str:
+            # Obtener la fecha de entrega original del pedido
+            fecha_entrega_original = pd.to_datetime(df_expanded[df_expanded['OT_ID_Linea'].astype(str) == str(row['OT'])]['fecha_entrega'].iloc[0])
+            # Si es la OT 300200, usar la fecha modificada
+            if str(row['OT']) == '300200':
+                fecha_entrega_original = pd.to_datetime('2023-12-25')
+            fecha_limite = fecha_entrega_original
+            if row['Fecha Fin Prevista'] > fecha_limite:
+                return 'Fuera de Plazo'
+            else:
+                return 'En Plazo'
+
+        df['Estado'] = df.apply(determinar_estado_planificacion, axis=1)
+        df['Cumplimiento'] = df.apply(determinar_cumplimiento, axis=1)
+        
+        # Añadir número de pedido al DataFrame
+        df['Número de Pedido'] = df['OT'].apply(lambda x: df_expanded[df_expanded['OT_ID_Linea'].astype(str) == str(x)]['numero_pedido'].iloc[0] if not df_expanded[df_expanded['OT_ID_Linea'].astype(str) == str(x)].empty else 'N/A')
+        
+        # Añadir fecha de entrega al DataFrame
+        df['Fecha de Entrega'] = df['OT'].apply(lambda x: pd.to_datetime('2023-12-25') if str(x) == '300200' else pd.to_datetime(df_expanded[df_expanded['OT_ID_Linea'].astype(str) == str(x)]['fecha_entrega'].iloc[0]))
+        
+        # Renombrar columnas para mejor comprensión
+        df = df.rename(columns={
+            'Duración': 'Duración (días)',
+            'Operación': 'Proceso',
+            'OT_ID': 'Número de OT'
+        })
+        
+        # Reordenar columnas para mejor visualización
+        columnas_ordenadas = [
+            'Estado', 'Cumplimiento', 'Fecha Inicio Prevista', 'Fecha Fin Prevista', 
+            'Fecha de Entrega', 'OT', 'Número de Pedido', 'Nombre', 'Cantidad', 
+            'Proceso', 'Subproceso', 'Secuencia', 'Duración (días)', 'Número de OT', 'Operario'
+        ]
+        df = df[columnas_ordenadas]
+
+        # Filtros en la sidebar
+        with st.sidebar:
+            st.subheader("Filtrar")
+            
+            # Botón para limpiar filtros
+            if st.button("🗑️ Limpiar filtros"):
+                for key in ['pedido_filtro', 'ot_filtro', 'procesos_filtro', 'subprocesos_filtro', 'estados_filtro', 'cumplimiento_filtro']:
+                    if key in st.session_state:
+                        st.session_state[key] = []
+                st.rerun()
+            
+            # Inicializar df_filtrado con el DataFrame original
+            df_filtrado = df.copy()
+            
+            # Selector de rango de fechas
+            st.subheader("📅 Rango de fechas")
+            opciones_fechas = {
+                "1 Semana": 7,
+                "1 Mes": 30,
+                "6 Meses": 180,
+                "Año actual": 365,
+                "1 Año": 365,
+                "Todo": None
+            }
+            
+            rango_seleccionado = st.selectbox(
+                "Seleccionar rango",
+                options=list(opciones_fechas.keys()),
+                index=5  # Por defecto seleccionar "Todo"
             )
-        ),
-        yaxis=dict(
-            showgrid=True,
-            gridwidth=1,
-            gridcolor='LightGrey'
-        ),
-        bargap=0.2,
-        bargroupgap=0.1,
-        font=dict(
-            family="Roboto, sans-serif",
-            size=12
+            
+            # Aplicar filtro de fechas
+            if rango_seleccionado != "Todo":
+                dias = opciones_fechas[rango_seleccionado]
+                fecha_limite = fecha_actual + timedelta(days=dias)
+                # Filtrar procesos que se realizan dentro del rango seleccionado
+                mascara_fechas = (
+                    # El proceso comienza dentro del rango
+                    ((df_filtrado['Fecha Inicio Prevista'] >= fecha_actual) & 
+                     (df_filtrado['Fecha Inicio Prevista'] <= fecha_limite)) |
+                    # O el proceso termina dentro del rango
+                    ((df_filtrado['Fecha Fin Prevista'] >= fecha_actual) & 
+                     (df_filtrado['Fecha Fin Prevista'] <= fecha_limite)) |
+                    # O el proceso abarca todo el rango
+                    ((df_filtrado['Fecha Inicio Prevista'] <= fecha_actual) & 
+                     (df_filtrado['Fecha Fin Prevista'] >= fecha_limite)) |
+                    # O el proceso ya comenzó pero aún no ha terminado
+                    ((df_filtrado['Fecha Inicio Prevista'] <= fecha_actual) & 
+                     (df_filtrado['Fecha Fin Prevista'] >= fecha_actual)) |
+                    # O el proceso ya terminó pero fue en los últimos 7 días
+                    ((df_filtrado['Fecha Fin Prevista'] >= fecha_actual - timedelta(days=dias)) & 
+                     (df_filtrado['Fecha Fin Prevista'] <= fecha_actual))
+                )
+                df_filtrado = df_filtrado[mascara_fechas]
+            
+            # Checkbox para mostrar/ocultar diagrama de Gantt
+            mostrar_gantt = st.checkbox("📊 Mostrar diagrama de Gantt", value=True)
+            
+            # Inicializar filtros en session_state si no existen
+            for key in ['pedido_filtro', 'ot_filtro', 'procesos_filtro', 'subprocesos_filtro', 'estados_filtro', 'cumplimiento_filtro']:
+                if key not in st.session_state:
+                    st.session_state[key] = []
+            
+            # Filtro de número de pedido
+            pedido_filtro = st.multiselect(
+                "Número de Pedido",
+                options=sorted(df_filtrado['Número de Pedido'].unique()),
+                key='pedido_filtro'
+            )
+            
+            # Filtrar OTs según el pedido seleccionado
+            if pedido_filtro:
+                df_filtrado = df_filtrado[df_filtrado['Número de Pedido'].isin(pedido_filtro)]
+            
+            # Filtro de OT
+            ot_filtro = st.multiselect(
+                "Número de OT",
+                options=sorted(df_filtrado['OT'].unique()),
+                key='ot_filtro'
+            )
+            
+            # Actualizar df_filtrado con los OTs seleccionados
+            if ot_filtro:
+                df_filtrado = df_filtrado[df_filtrado['OT'].isin(ot_filtro)]
+            
+            # Obtener procesos disponibles según los OT seleccionados
+            procesos_disponibles = df_filtrado['Proceso'].unique()
+            
+            procesos_filtro = st.multiselect(
+                "Proceso",
+                options=sorted(procesos_disponibles),
+                key='procesos_filtro'
+            )
+            
+            # Actualizar df_filtrado con los procesos seleccionados
+            if procesos_filtro:
+                df_filtrado = df_filtrado[df_filtrado['Proceso'].isin(procesos_filtro)]
+            
+            # Obtener subprocesos disponibles según los procesos seleccionados
+            subprocesos_disponibles = []
+            if procesos_filtro:
+                for proceso in procesos_filtro:
+                    # Obtener subprocesos válidos para este proceso
+                    subprocesos_validos = SUBPROCESOS_VALIDOS.get(proceso, ['Sin especificar'])
+                    # Filtrar solo los subprocesos que existen en los datos
+                    subprocesos_existentes = df_filtrado[df_filtrado['Proceso'] == proceso]['Subproceso'].unique()
+                    # Agregar los subprocesos con el formato "Proceso - Subproceso"
+                    for subproceso in subprocesos_validos:
+                        if subproceso in subprocesos_existentes:
+                            if subproceso == 'Sin especificar':
+                                subprocesos_disponibles.append(f"{proceso} - Sin especificar")
+                            else:
+                                subprocesos_disponibles.append(f"{proceso} - {subproceso}")
+            else:
+                subprocesos_disponibles = df_filtrado['Subproceso'].unique()
+            
+            subprocesos_filtro = st.multiselect(
+                "Subproceso",
+                options=sorted(subprocesos_disponibles),
+                key='subprocesos_filtro'
+            )
+            
+            # Actualizar df_filtrado con los subprocesos seleccionados
+            if subprocesos_filtro:
+                # Extraer solo el subproceso de la selección (eliminar el prefijo del proceso)
+                subprocesos_seleccionados = [s.split(' - ')[1] for s in subprocesos_filtro]
+                df_filtrado = df_filtrado[df_filtrado['Subproceso'].isin(subprocesos_seleccionados)]
+            
+            # Obtener estados disponibles según los filtros anteriores
+            estados_disponibles = df_filtrado['Estado'].unique()
+            
+            estados_filtro = st.multiselect(
+                "Estado de la OT",
+                options=sorted(estados_disponibles),
+                key='estados_filtro'
+            )
+            
+            # Actualizar df_filtrado con los estados seleccionados
+            if estados_filtro:
+                df_filtrado = df_filtrado[df_filtrado['Estado'].isin(estados_filtro)]
+            
+            # Obtener cumplimientos disponibles según los filtros anteriores
+            cumplimientos_disponibles = df_filtrado['Cumplimiento'].unique()
+            
+            cumplimiento_filtro = st.multiselect(
+                "Cumplimiento de la entrega",
+                options=sorted(cumplimientos_disponibles),
+                key='cumplimiento_filtro'
+            )
+            
+            # Actualizar df_filtrado con los cumplimientos seleccionados
+            if cumplimiento_filtro:
+                df_filtrado = df_filtrado[df_filtrado['Cumplimiento'].isin(cumplimiento_filtro)]
+
+        # Crear DataFrame para Gantt
+        df_gantt = pd.DataFrame({
+            'Task': [f"{row['OT']} - {row['Proceso']}" for _, row in df_filtrado.iterrows()],
+            'Start': [row['Fecha Inicio Prevista'] for _, row in df_filtrado.iterrows()],
+            'Finish': [row['Fecha Fin Prevista'] for _, row in df_filtrado.iterrows()],
+            'Resource': [row['Proceso'] for _, row in df_filtrado.iterrows()]
+        })
+
+        # Obtener valores únicos de Resource
+        recursos_unicos = df_gantt['Resource'].unique()
+        
+        # Crear diccionario de colores para los procesos
+        colores_procesos = {
+            'Dibujo': '#1f77b4',      # Azul Streamlit
+            'Pantalla': '#ff7f0e',    # Naranja Streamlit
+            'Corte': '#2ca02c',       # Verde Streamlit
+            'Impresión': '#d62728',   # Rojo Streamlit
+            'Grabado': '#9467bd',     # Púrpura Streamlit
+            'Adhesivo': '#8c564b',    # Marrón Streamlit
+            'Laminado': '#e377c2',    # Rosa Streamlit
+            'Mecanizado': '#8B4513',  # Marrón sienna Streamlit
+            'Taladro': '#bcbd22',     # Verde oliva Streamlit
+            'Numerado': '#17becf',    # Cian Streamlit
+            'Embalaje': '#ff9896',    # Rojo suave Streamlit
+            'Can. Romo': '#98df8a'    # Verde suave Streamlit
+        }
+        
+        colores_actuales = {}
+        for recurso in recursos_unicos:
+            # Usar el nombre base del proceso (sin subproceso)
+            proceso_base = recurso.split(' - ')[0] if ' - ' in recurso else recurso
+            # Buscar el color correspondiente o usar un color por defecto
+            colores_actuales[recurso] = colores_procesos.get(proceso_base, '#808080')  # Gris por defecto
+
+        # Crear figura de Gantt con Plotly
+        if mostrar_gantt:
+            st.markdown("### Cronograma de producción")
+            
+            # Calcular altura dinámica basada en el número de tareas
+            altura_base = 600  # altura base en píxeles
+            altura_por_tarea = 50  # Aumentado de 30 a 50 para dar más espacio
+            altura_minima = 400  # altura mínima en píxeles
+            altura_maxima = 2000  # Aumentado para permitir más espacio vertical
+            altura_calculada = min(max(altura_base + (len(df_gantt) * altura_por_tarea), altura_minima), altura_maxima)
+            
+            fig = ff.create_gantt(df_gantt,
+                                index_col='Resource',
+                                show_colorbar=True,
+                                group_tasks=True,
+                                showgrid_x=True,
+                                showgrid_y=True,
+                                title='',
+                                bar_width=0.4,
+                                colors=colores_actuales,
+                                show_hover_fill=True)
+
+            # Configurar el layout del gráfico
+            fig.update_layout(
+                height=altura_calculada,
+                xaxis_title="Fechas",
+                yaxis_title="Operaciones",
+                showlegend=True,
+                xaxis=dict(
+                    type='date',
+                    showgrid=True,
+                    gridwidth=1,
+                    gridcolor='LightGrey',
+                    rangeslider=dict(visible=False),  # Desactivar el rangeslider
+                    range=[df_gantt['Start'].min(), df_gantt['Finish'].max()],  # Establecer el rango de fechas
+                    rangeselector=dict(visible=False)   # Ocultar los botones de rango
+                ),
+                yaxis=dict(
+                    showgrid=True,
+                    gridwidth=1,
+                    gridcolor='LightGrey',
+                    tickangle=0,  # Ángulo de las etiquetas
+                    tickfont=dict(size=11),  # Tamaño de la fuente
+                    automargin=True,  # Ajuste automático de márgenes
+                    side='left',  # Asegurar que las etiquetas estén a la izquierda
+                    dtick=1  # Mostrar todas las etiquetas
+                ),
+                margin=dict(l=300, r=50, t=50, b=50),  # Reducido el margen izquierdo ya que las etiquetas son más cortas
+                font=dict(
+                    family="Roboto, sans-serif",
+                    size=12
+                )
+            )
+
+            # Convertir a HTML y mostrarlo en un iframe scrollable
+            html_gantt = fig.to_html(
+                full_html=False,
+                include_plotlyjs="cdn",
+                config={"displayModeBar": True}
+            )
+
+            # Mostrar el gráfico en un iframe con scroll
+            components.html(html_gantt, height=600, scrolling=True)
+        
+        # Mostrar tabla de detalles filtrada
+        st.markdown("### Detalles por OT")
+        
+        # Definir los estilos para cada estado
+        def color_row(row):
+            # Primero verificamos si está fuera de plazo
+            if row['Cumplimiento'] == 'Fuera de Plazo':
+                return ['background-color: #FFE4E1'] * len(row)  # Rojo suave
+            
+            # Si no está fuera de plazo, aplicamos los colores según el estado
+            if row['Estado'] == 'Planificado Finalizado':
+                return ['background-color: #E6F3FF'] * len(row)  # Azul suave
+            elif row['Estado'] == 'Activado':
+                return ['background-color: #FFF8DC'] * len(row)  # Amarillo suave
+            elif row['Estado'] == 'Listo para Activar':
+                return ['background-color: #E0FFF0'] * len(row)  # Verde suave
+            else:  # Pendiente
+                return [''] * len(row)
+        
+        # Aplicar los estilos a la tabla
+        styled_df = df_filtrado.style.apply(color_row, axis=1)
+        
+        # Ajustar la altura de la tabla según si el diagrama de Gantt está visible
+        if mostrar_gantt:
+            st.dataframe(styled_df, hide_index=True, use_container_width=True)
+        else:
+            # Calcular altura basada en el número de filas (aproximadamente 35px por fila)
+            altura_por_fila = 35
+            altura_minima = 400  # altura mínima en píxeles
+            altura_maxima = 800  # altura máxima en píxeles
+            altura_calculada = min(max(len(df_filtrado) * altura_por_fila, altura_minima), altura_maxima)
+            
+            st.dataframe(
+                styled_df, 
+                hide_index=True, 
+                use_container_width=True,
+                height=altura_calculada
+            )
+        
+        # Métricas principales
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Fecha de Finalización", (fecha_inicio + timedelta(days=makespan)).strftime("%d/%m/%Y"))
+        with col2:
+            st.metric("Número de OTs", len(df_filtrado['OT'].unique()))
+        with col3:
+            st.metric("Total de Operaciones", len(df_filtrado))
+        
+        # Resumen por proceso
+        st.subheader("Resumen por Proceso")
+        proceso_tiempos = df_filtrado.groupby('Proceso')['Duración (días)'].sum()
+        st.bar_chart(proceso_tiempos)
+        
+        # Instrucciones para operarios
+        st.subheader("📋 Instrucciones para Operarios")
+        for _, row in df_filtrado.iterrows():
+            estado_emoji = {
+                'Fuera de Plazo': '⚠️',
+                'En Plazo': '✅',
+                'Planificado Finalizado': '📅',
+                'Activado': '🔄',
+                'Listo para Activar': '🟢',
+                'Pendiente': '⏳'
+            }
+            
+            # Obtener la fecha límite del OT
+            fecha_limite = fecha_inicio + timedelta(days=pedidos[str(row['OT'])]['fecha_entrega'])
+            
+            st.markdown(f"""
+            **OT {row['OT']} - {row['Proceso']}** {estado_emoji[row['Cumplimiento']]}
+            - Subproceso: {row['Subproceso']}
+            - Número de OT: {row['Número de OT']}
+            - Operario: {row['Operario']}
+            - Fecha de Inicio Prevista: {row['Fecha Inicio Prevista'].strftime('%d/%m/%Y')}
+            - Fecha de Finalización Prevista: {row['Fecha Fin Prevista'].strftime('%d/%m/%Y')}
+            - Fecha Límite: {fecha_limite.strftime('%d/%m/%Y')}
+            - Duración: {row['Duración (días)']} días
+            - Estado: {row['Estado']} {estado_emoji.get(row['Estado'], '')}
+            - Cumplimiento: {row['Cumplimiento']}
+            """)
+
+        # Calcular fechas límite internas para todos los pedidos
+        fechas_limite_internas = {
+            pedido: calcular_fechas_limite_internas(pedido, data, fecha_inicio) 
+            for pedido, data in pedidos.items()
+        }
+
+        # Añadir prioridad y fechas límite internas al DataFrame
+        df['Prioridad'] = df['OT'].apply(lambda x: calcular_prioridad(x, pedidos[str(x)]))
+        df['Fecha Límite Interna'] = df.apply(
+            lambda row: fechas_limite_internas[str(row['OT'])][int(row['Secuencia'].split()[1]) - 1], 
+            axis=1
         )
-    )
-    
-    # Asignar colores consistentes a cada proceso
-    for trace in fig.data:
-        proceso = trace.name.split(' - ')[-1]  # Obtener el nombre del proceso
-        if proceso in colores_procesos:
-            trace.marker.color = colores_procesos[proceso]
-            trace.marker.line.color = colores_procesos[proceso]
-            trace.marker.line.width = 1
-    
-    # Forzar la actualización de los colores
-    fig.update_traces(marker=dict(line=dict(width=1)))
-    
-    # Mostrar gráfico
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Mostrar tabla de detalles filtrada
-    st.markdown("### Detalles por pedido")
-    
-    # Reordenar y seleccionar columnas
-    columnas_ordenadas = [
-        'Pedido', 'Número de OT', 'Secuencia', 'Proceso', 'Subproceso',
-        'Fecha Inicio', 'Fecha Fin', 'Duración (días)', 'Estado',
-        'Cumplimiento', 'Operario'
-    ]
-    df_filtrado = df_filtrado[columnas_ordenadas]
-    
-    # Mostrar tabla sin estilos y sin índices
-    st.dataframe(df_filtrado, hide_index=True)
-else:
-    st.error("No se pudo encontrar una solución óptima para los pedidos actuales") 
+
+        # Reordenar columnas para mejor visualización
+        columnas_ordenadas = [
+            'Estado', 'Cumplimiento', 'Prioridad', 'Fecha Inicio Prevista', 'Fecha Fin Prevista', 
+            'Fecha Límite Interna', 'OT', 'Número de Pedido', 'Nombre', 'Proceso', 'Subproceso', 
+            'Secuencia', 'Duración', 'Número de OT', 'Operario'
+        ]
+        df = df[columnas_ordenadas]
+
+        # Añadir métricas de prioridad
+        st.subheader("Métricas de Prioridad")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("OTs Críticos", len(df[df['Prioridad'] > df['Prioridad'].median()]))
+        with col2:
+            st.metric("Procesos Fuera de Plazo", len(df[df['Cumplimiento'] == 'Fuera de Plazo']))
+        with col3:
+            st.metric("Procesos en Riesgo", len(df[df['Fecha Fin Prevista'] > df['Fecha Límite Interna']]))
+
+        # Añadir gráfico de prioridades
+        st.subheader("Distribución de Prioridades")
+        st.bar_chart(df.groupby('OT')['Prioridad'].mean().sort_values(ascending=False))
+    else:
+        st.error("No se pudo encontrar una solución óptima para los pedidos actuales")
+
+except Exception as e:
+    st.error(f"Error al conectar con BigQuery: {str(e)}")
+    st.info("""
+    Por favor, verifica que:
+    1. El archivo de credenciales existe en la ruta especificada
+    2. El proyecto 'sergar' existe y está activo en Google Cloud
+    3. La cuenta de servicio tiene los permisos necesarios en BigQuery
+    4. El dataset y la tabla especificados existen y son accesibles
+    """)
+    st.stop() 

@@ -21,6 +21,8 @@ def planificar_produccion(pedidos):
     
     # Calcular el horizonte máximo de planificación (máxima fecha de entrega)
     horizonte_max = max(data["fecha_entrega"] for data in pedidos.values())
+    # Aumentar el horizonte para dar más flexibilidad
+    horizonte_max = horizonte_max * 2  # Duplicar el horizonte para dar más margen
     makespan = model.NewIntVar(0, horizonte_max, "makespan")
     
     # Agrupar tareas por tipo de proceso
@@ -33,8 +35,9 @@ def planificar_produccion(pedidos):
             # Convertir duración a días enteros (redondeando hacia arriba)
             duracion_dias = int(duracion) if isinstance(duracion, int) or duracion.is_integer() else int(duracion) + 1
             
-            start = model.NewIntVar(0, data["fecha_entrega"], f"start_{pedido}_{i}")
-            end = model.NewIntVar(0, data["fecha_entrega"], f"end_{pedido}_{i}")
+            # Aumentar el rango de fechas posibles para cada tarea
+            start = model.NewIntVar(0, horizonte_max, f"start_{pedido}_{i}")
+            end = model.NewIntVar(0, horizonte_max, f"end_{pedido}_{i}")
             interval = model.NewIntervalVar(start, duracion_dias, end, f"interval_{pedido}_{i}")
             
             # Agrupar por tipo de proceso
@@ -75,6 +78,7 @@ def planificar_produccion(pedidos):
                 pedido,
                 i,
                 pedidos[pedido]["nombre"],
+                pedidos[pedido]["cantidad"],
                 duracion_dias,
                 proceso,
                 subproceso,

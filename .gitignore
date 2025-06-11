@@ -1,6 +1,10 @@
+# Credenciales
+credentials/
+*.json
+
 # Entornos virtuales
-venv_sergar/
 venv/
+venv_sergar/
 env/
 ENV/
 .env/
@@ -76,27 +80,5 @@ site/
 .DS_Store
 Thumbs.db
 
-# Archivos de configuración específicos
-config.ini
-settings.json
-credentials.json
-
-# Archivos de logs
-logs/
-*.log
-
-# Archivos de backup
-*.bak
-*.backup
-*~
-
-# Archivos compilados
-*.pyc
-*.pyo
-*.pyd
-*.so
-*.dll
-*.class
-*.exe
-*.bin
-*.dylib 
+# Archivos adicionales
+sergar-credentials.json 
