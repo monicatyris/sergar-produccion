@@ -40,13 +40,13 @@ st.set_page_config(
 # Función para obtener las credenciales
 def get_credentials():
     try:
-        # En producción (Streamlit Cloud)
-        if 'GOOGLE_CREDENTIALS' in st.secrets:
-            return json.loads(st.secrets['GOOGLE_CREDENTIALS'])
-        # En desarrollo local
-        elif 'BIGQUERY_CREDENTIALS_PATH' in os.environ:
+        # En desarrollo local, usar el archivo de credenciales
+        if os.path.exists(os.getenv('BIGQUERY_CREDENTIALS_PATH', '')):
             with open(os.getenv('BIGQUERY_CREDENTIALS_PATH'), 'r') as f:
                 return json.load(f)
+        # En producción (Streamlit Cloud), usar secrets
+        elif 'GOOGLE_CREDENTIALS' in st.secrets:
+            return json.loads(st.secrets['GOOGLE_CREDENTIALS'])
         else:
             raise Exception("No se encontraron credenciales")
     except Exception as e:
@@ -72,10 +72,18 @@ def get_bigquery_client():
 try:
     client = get_bigquery_client()
     if client:
-        # Obtener configuración desde secrets o .env
-        project_id = st.secrets.get('BIGQUERY', {}).get('project_id') or os.getenv('BIGQUERY_PROJECT_ID')
-        dataset_id = st.secrets.get('BIGQUERY', {}).get('dataset_id') or os.getenv('BIGQUERY_DATASET_ID')
-        table_name = st.secrets.get('BIGQUERY', {}).get('table_name') or os.getenv('BIGQUERY_TABLE_NAME')
+        # Obtener configuración desde .env en local o secrets en producción
+        if os.path.exists(os.getenv('BIGQUERY_CREDENTIALS_PATH', '')):
+            # En local, usar variables de entorno
+            project_id = os.getenv('BIGQUERY_PROJECT_ID')
+            dataset_id = os.getenv('BIGQUERY_DATASET_ID')
+            table_name = os.getenv('BIGQUERY_TABLE_NAME')
+        else:
+            # En producción, usar secrets
+            project_id = st.secrets.get('BIGQUERY', {}).get('project_id')
+            dataset_id = st.secrets.get('BIGQUERY', {}).get('dataset_id')
+            table_name = st.secrets.get('BIGQUERY', {}).get('table_name')
+        
         table_name_sales_orders = 'sales_orders'  # Valor fijo ya que no está en .env
         
         TABLE_ID = f"{project_id}.{dataset_id}.{table_name}"
