@@ -46,7 +46,11 @@ def get_credentials():
                 return json.load(f)
         # En producción (Streamlit Cloud), usar secrets
         elif 'GOOGLE_CREDENTIALS' in st.secrets:
-            return json.loads(st.secrets['GOOGLE_CREDENTIALS'])
+            # Verificar si ya es un diccionario o necesita ser parseado
+            creds = st.secrets['GOOGLE_CREDENTIALS']
+            if isinstance(creds, str):
+                return json.loads(creds)
+            return dict(creds)  # Convertir AttrDict a diccionario normal
         else:
             raise Exception("No se encontraron credenciales")
     except Exception as e:
