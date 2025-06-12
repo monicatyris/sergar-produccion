@@ -646,6 +646,13 @@ if plan:
     # Mostrar tabla de detalles filtrada
     st.markdown("### Detalles por OT")
     
+    # Métricas principales al principio
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Número de OTs", len(df_filtrado['OT'].unique()))
+    with col2:
+        st.metric("Total de Operaciones", len(df_filtrado))
+    
     # Definir los estilos para cada estado
     def color_row(row):
         # Primero verificamos si está fuera de plazo
@@ -681,14 +688,5 @@ if plan:
             use_container_width=True,
             height=altura_calculada
         )
-    
-    # Métricas principales
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Fecha de Finalización", (fecha_inicio + timedelta(days=makespan)).strftime("%d/%m/%Y"))
-    with col2:
-        st.metric("Número de OTs", len(df_filtrado['OT'].unique()))
-    with col3:
-        st.metric("Total de Operaciones", len(df_filtrado))
 else:
     st.error("No se pudo encontrar una solución óptima para los pedidos actuales") 
