@@ -65,6 +65,9 @@ def update_sales_orders_schedule_table(df: pd.DataFrame, credentials_path: str, 
     """
 
     try:
+        # Add column for table update date
+        df['fecha_actualizacion_tabla'] = pd.NaT
+
         # Create client
         client = bigquery.Client.from_service_account_json(credentials_path)
         
