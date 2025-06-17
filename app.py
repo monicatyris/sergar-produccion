@@ -23,7 +23,7 @@ from utils import (
 )
 
 from processing.transformations import process_data
-from bigquery.uploader import insert_new_sales_orders
+from bigquery.uploader import insert_new_sales_orders, update_sales_orders_schedule_table
 import streamlit.components.v1 as components
 
 # Cargar variables de entorno
@@ -37,14 +37,26 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 # Configuración de BigQuery desde variables de entorno
-PROJECT_ID = os.getenv('BIGQUERY_PROJECT_ID')
-DATASET_ID = os.getenv('BIGQUERY_DATASET_ID')
+# Obtener configuración según el entorno
+if os.path.exists(os.getenv('BIGQUERY_CREDENTIALS_PATH', '')):
+    # En local, usar variables de entorno
+    PROJECT_ID = os.getenv('BIGQUERY_PROJECT_ID')
+    DATASET_ID = os.getenv('BIGQUERY_DATASET_ID')
+    TABLE_NAME_SALES_ORDERS = os.getenv('BIGQUERY_TABLE_NAME_SALES_ORDERS')
+    TABLE_NAME_CURRENT_SALES_ORDERS = os.getenv('BIGQUERY_TABLE_NAME_CURRENT_SALES_ORDERS')
+    TABLE_NAME_CURRENT_SCHEDULE = os.getenv('BIGQUERY_TABLE_NAME_CURRENT_SCHEDULE')
+else:
+    # En producción (Streamlit Cloud), usar secrets
+    PROJECT_ID = st.secrets.get('BIGQUERY', {}).get('project_id')
+    DATASET_ID = st.secrets.get('BIGQUERY', {}).get('dataset_id')
+    TABLE_NAME_SALES_ORDERS = st.secrets.get('BIGQUERY', {}).get('table_name_sales_orders')
+    TABLE_NAME_CURRENT_SALES_ORDERS = st.secrets.get('BIGQUERY', {}).get('table_name_current_sales_orders')
+    TABLE_NAME_CURRENT_SCHEDULE = st.secrets.get('BIGQUERY', {}).get('table_name_current_schedule')
 
-TABLE_NAME_SALES_ORDERS = os.getenv('BIGQUERY_TABLE_NAME_SALES_ORDERS')
+# Construir los IDs completos de las tablas
 TABLE_ID_SALES_ORDERS = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME_SALES_ORDERS}"
-
-TABLE_NAME_CURRENT_SALES_ORDERS = os.getenv('BIGQUERY_TABLE_NAME_CURRENT_SALES_ORDERS')
 TABLE_ID_CURRENT_SALES_ORDERS = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME_CURRENT_SALES_ORDERS}"
+TABLE_ID_CURRENT_SCHEDULE = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME_CURRENT_SCHEDULE}"
 
 CREDENTIALS_PATH = os.getenv('BIGQUERY_CREDENTIALS_PATH')
 
@@ -88,24 +100,8 @@ try:
     #client = bigquery.Client.from_service_account_json(CREDENTIALS_PATH, location="europe-southwest1")
     client = get_bigquery_client()
     if client:
-        # Obtener configuración desde .env en local o secrets en producción
-        if os.path.exists(os.getenv('BIGQUERY_CREDENTIALS_PATH', '')):
-            # En local, usar variables de entorno
-            project_id = os.getenv('BIGQUERY_PROJECT_ID')
-            dataset_id = os.getenv('BIGQUERY_DATASET_ID')
-            table_name = os.getenv('BIGQUERY_TABLE_NAME_CURRENT_SALES_ORDERS')
-        else:
-            # En producción, usar secrets
-            project_id = st.secrets.get('BIGQUERY', {}).get('project_id')
-            dataset_id = st.secrets.get('BIGQUERY', {}).get('dataset_id')
-            table_name = st.secrets.get('BIGQUERY', {}).get('table_name')
-        
-        table_name_sales_orders = 'sales_orders'  # Valor fijo ya que no está en .env
-        
-        #TABLE_ID = f"{project_id}.{dataset_id}.{table_name}"
-        
-        # Realizar la consulta
-        query = f'SELECT * FROM `{TABLE_ID_CURRENT_SALES_ORDERS}`'
+        # Cargar el cronograma actual desde final_sales_orders_schedule
+        query = f'SELECT * FROM `{TABLE_ID_CURRENT_SCHEDULE}`'
         query_job = client.query(query)
         results = query_job.result()
 
@@ -126,8 +122,6 @@ try:
         df_expanded['fecha_entrega'] = df['fecha_entrega'].values
         df_expanded['numero_pedido'] = df['numero_pedido'].values
 
-        # Guardar df_expanded en un archivo CSV para revisión
-        df_expanded.to_csv('df_expanded.csv', index=False, encoding='utf-8')
     else:
         st.error("No se pudo conectar a BigQuery")
         st.stop()
@@ -152,13 +146,31 @@ with st.sidebar:
     st.image("logo-sergar.png")
 
     # Opción para cargar pedidos desde Excel
-    st.subheader("Cargar Pedidos en Exel")
+    st.subheader("Cargar pedidos en Excel")
     uploaded_excel_file = st.file_uploader("Cargar archivo Excel de pedidos", type=['xlsx'])
     if uploaded_excel_file is not None:
         try:
+            # 1. Procesar el archivo Excel
             df = pd.read_excel(uploaded_excel_file, decimal=",", date_format="%d/%m/%Y")
             orders_list = process_data(df)
+            
+            # 2. Insertar en sales_orders_production
             insert_new_sales_orders(orders_list, CREDENTIALS_PATH, TABLE_ID_SALES_ORDERS)
+            
+            # 3. Obtener datos de final_sales_orders_production
+            query = f'SELECT * FROM `{TABLE_ID_CURRENT_SALES_ORDERS}`'
+            query_job = client.query(query)
+            results = query_job.result()
+            df = results.to_dataframe()
+            
+            # 4. Procesar los datos para la planificación
+            df = df.explode('articulos')
+            if isinstance(df['articulos'].iloc[0], str):
+                df['articulos'] = df['articulos'].apply(json.loads)
+            df_expanded = pd.json_normalize(df['articulos'])
+            df_expanded['fecha_entrega'] = df['fecha_entrega'].values
+            df_expanded['numero_pedido'] = df['numero_pedido'].values
+            
             st.success("Archivo Excel cargado correctamente")
         except Exception as e:
             st.error(f"Error al cargar el archivo Excel: {str(e)}")
@@ -699,5 +711,21 @@ if plan:
             use_container_width=True,
             height=altura_calculada
         )
+
+    # Guardar el resultado en final_sales_orders_schedule
+    try:
+        # Preparar el DataFrame para guardar
+        df_to_save = df_filtrado.copy()
+        
+        # Convertir las fechas a formato string para BigQuery
+        df_to_save['Fecha Inicio Prevista'] = df_to_save['Fecha Inicio Prevista'].dt.strftime('%Y-%m-%d')
+        df_to_save['Fecha Fin Prevista'] = df_to_save['Fecha Fin Prevista'].dt.strftime('%Y-%m-%d')
+        df_to_save['Fecha de Entrega'] = df_to_save['Fecha de Entrega'].dt.strftime('%Y-%m-%d')
+        
+        # Usar la función existente para actualizar la tabla
+        update_sales_orders_schedule_table(df_to_save, CREDENTIALS_PATH, TABLE_ID_CURRENT_SCHEDULE)
+        st.success("Cronograma actualizado correctamente en BigQuery")
+    except Exception as e:
+        st.error(f"Error al guardar el cronograma en BigQuery: {str(e)}")
 else:
     st.error("No se pudo encontrar una solución óptima para los pedidos actuales") 
