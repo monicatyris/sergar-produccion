@@ -23,7 +23,7 @@ from utils import (
 )
 
 from processing.transformations import process_data
-from bigquery.uploader import load_sales_orders, load_sales_orders_table
+from bigquery.uploader import insert_new_sales_orders
 import streamlit.components.v1 as components
 
 # Cargar variables de entorno
@@ -36,6 +36,17 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+# Configuración de BigQuery desde variables de entorno
+PROJECT_ID = os.getenv('BIGQUERY_PROJECT_ID')
+DATASET_ID = os.getenv('BIGQUERY_DATASET_ID')
+
+TABLE_NAME_SALES_ORDERS = os.getenv('BIGQUERY_TABLE_NAME_SALES_ORDERS')
+TABLE_ID_SALES_ORDERS = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME_SALES_ORDERS}"
+
+TABLE_NAME_CURRENT_SALES_ORDERS = os.getenv('BIGQUERY_TABLE_NAME_CURRENT_SALES_ORDERS')
+TABLE_ID_CURRENT_SALES_ORDERS = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME_CURRENT_SALES_ORDERS}"
+
+CREDENTIALS_PATH = os.getenv('BIGQUERY_CREDENTIALS_PATH')
 
 # Función para obtener las credenciales
 def get_credentials():
@@ -74,6 +85,7 @@ def get_bigquery_client():
 
 # Configuración de BigQuery
 try:
+    #client = bigquery.Client.from_service_account_json(CREDENTIALS_PATH, location="europe-southwest1")
     client = get_bigquery_client()
     if client:
         # Obtener configuración desde .env en local o secrets en producción
@@ -81,7 +93,7 @@ try:
             # En local, usar variables de entorno
             project_id = os.getenv('BIGQUERY_PROJECT_ID')
             dataset_id = os.getenv('BIGQUERY_DATASET_ID')
-            table_name = os.getenv('BIGQUERY_TABLE_NAME')
+            table_name = os.getenv('BIGQUERY_TABLE_NAME_CURRENT_SALES_ORDERS')
         else:
             # En producción, usar secrets
             project_id = st.secrets.get('BIGQUERY', {}).get('project_id')
@@ -90,10 +102,10 @@ try:
         
         table_name_sales_orders = 'sales_orders'  # Valor fijo ya que no está en .env
         
-        TABLE_ID = f"{project_id}.{dataset_id}.{table_name}"
+        #TABLE_ID = f"{project_id}.{dataset_id}.{table_name}"
         
         # Realizar la consulta
-        query = f'SELECT * FROM `{TABLE_ID}`'
+        query = f'SELECT * FROM `{TABLE_ID_CURRENT_SALES_ORDERS}`'
         query_job = client.query(query)
         results = query_job.result()
 
@@ -146,8 +158,7 @@ with st.sidebar:
         try:
             df = pd.read_excel(uploaded_excel_file, decimal=",", date_format="%d/%m/%Y")
             orders_list = process_data(df)
-            load_sales_orders(orders_list, os.getenv('BIGQUERY_CREDENTIALS_PATH'), TABLE_ID) 
-            load_sales_orders_table(df, os.getenv('BIGQUERY_CREDENTIALS_PATH'), project_id, dataset_id, table_name_sales_orders)
+            insert_new_sales_orders(orders_list, CREDENTIALS_PATH, TABLE_ID_SALES_ORDERS)
             st.success("Archivo Excel cargado correctamente")
         except Exception as e:
             st.error(f"Error al cargar el archivo Excel: {str(e)}")
