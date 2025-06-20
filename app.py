@@ -1,23 +1,28 @@
-import streamlit as st
+import json
+import os
+from datetime import datetime, timedelta
+from typing import Any, Dict
+
 import pandas as pd
 import plotly.figure_factory as ff
-from datetime import datetime, timedelta
-import json
-from ortools_sergar import planificar_produccion
-from google.cloud import bigquery
-import os
-from ortools.sat.python import cp_model
+import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
-from typing import Dict, Any
+from ortools.sat.python import cp_model
+
+from bigquery.client import get_bigquery_client
+from bigquery.uploader import (
+    insert_new_sales_orders,
+    update_sales_orders_schedule_table,
+)
+from ortools_sergar import planificar_produccion
+from processing.transformations import process_data
 from utils import (
-    completar_datos_procesos,
     SECUENCIA_PROCESOS,
     SUBPROCESOS_VALIDOS,
+    completar_datos_procesos,
 )
 
-from processing.transformations import process_data
-from bigquery.uploader import insert_new_sales_orders, update_sales_orders_schedule_table
-import streamlit.components.v1 as components
 error_msg = "La aplicación ha fallado. Por favor, contacta con el servicio de soporte."
 
 def post_planificacion(plan: dict, pedidos):
@@ -101,7 +106,7 @@ def post_planificacion(plan: dict, pedidos):
         
         # Usar la función existente para actualizar la tabla
         print("Actualizando cronograma en BigQuery...")
-        update_sales_orders_schedule_table(df_to_save, CREDENTIALS_PATH, TABLE_ID_CURRENT_SCHEDULE)
+        update_sales_orders_schedule_table(df_to_save, TABLE_ID_CURRENT_SCHEDULE)
         print("Cronograma actualizado correctamente")
         st.success("Cronograma actualizado correctamente")
     except Exception as e:
@@ -352,101 +357,37 @@ st.set_page_config(
 # Obtener configuración según el entorno
 if os.path.exists(os.getenv('BIGQUERY_CREDENTIALS_PATH', '')):
     # En local, usar variables de entorno
-    PROJECT_ID = os.getenv('BIGQUERY_PROJECT_ID')
-    DATASET_ID = os.getenv('BIGQUERY_DATASET_ID')
-    TABLE_NAME_SALES_ORDERS = os.getenv('BIGQUERY_TABLE_NAME_SALES_ORDERS')
-    TABLE_NAME_CURRENT_SALES_ORDERS = os.getenv('BIGQUERY_TABLE_NAME_CURRENT_SALES_ORDERS')
-    TABLE_NAME_CURRENT_SCHEDULE = os.getenv('BIGQUERY_TABLE_NAME_CURRENT_SCHEDULE')
+    TABLE_ID_SALES_ORDERS = os.getenv('BIGQUERY_SALES_ORDERS_TABLE')
+    TABLE_ID_CURRENT_SALES_ORDERS = os.getenv('BIGQUERY_CURRENT_SALES_ORDERS_TABLE')
+    TABLE_ID_CURRENT_SCHEDULE = os.getenv('BIGQUERY_CURRENT_SCHEDULE_TABLE')
 else:
     # En producción (Streamlit Cloud), usar secrets
-    PROJECT_ID = st.secrets.get('BIGQUERY', {}).get('project_id')
-    DATASET_ID = st.secrets.get('BIGQUERY', {}).get('dataset_id')
-    TABLE_NAME_SALES_ORDERS = st.secrets.get('BIGQUERY', {}).get('table_name_sales_orders')
-    TABLE_NAME_CURRENT_SALES_ORDERS = st.secrets.get('BIGQUERY', {}).get('table_name_current_sales_orders')
-    TABLE_NAME_CURRENT_SCHEDULE = st.secrets.get('BIGQUERY', {}).get('table_name_current_schedule')
-
-# Construir los IDs completos de las tablas
-TABLE_ID_SALES_ORDERS = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME_SALES_ORDERS}"
-TABLE_ID_CURRENT_SALES_ORDERS = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME_CURRENT_SALES_ORDERS}"
-TABLE_ID_CURRENT_SCHEDULE = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME_CURRENT_SCHEDULE}"
-
-CREDENTIALS_PATH = os.getenv('BIGQUERY_CREDENTIALS_PATH')
-
-# Función para obtener las credenciales
-def get_credentials():
-    try:
-        # En desarrollo local, usar el archivo de credenciales
-        if os.path.exists(os.getenv('BIGQUERY_CREDENTIALS_PATH', '')):
-            with open(os.getenv('BIGQUERY_CREDENTIALS_PATH'), 'r') as f:
-                return json.load(f)
-        # En producción (Streamlit Cloud), usar secrets
-        elif 'GOOGLE_CREDENTIALS' in st.secrets:
-            # Verificar si ya es un diccionario o necesita ser parseado
-            creds = st.secrets['GOOGLE_CREDENTIALS']
-            if isinstance(creds, str):
-                return json.loads(creds)
-            return dict(creds)  # Convertir AttrDict a diccionario normal
-        else:
-            raise Exception("No se encontraron credenciales")
-    except Exception as e:
-        print(f"Error al cargar las credenciales: {str(e)}")
-        st.warning(error_msg)
-        return None
-
-# Función para crear el cliente de BigQuery
-def get_bigquery_client():
-    try:
-        credentials = get_credentials()
-        if credentials:
-            return bigquery.Client.from_service_account_info(
-                credentials,
-                project=credentials.get('project_id'),
-                location="europe-southwest1"
-            )
-        return None
-    except Exception as e:
-        print(f"Error al crear el cliente de BigQuery: {str(e)}")
-        st.warning(error_msg)
-        return None
+    TABLE_ID_SALES_ORDERS = st.secrets.get('BIGQUERY', {}).get('sales_orders_table')
+    TABLE_ID_CURRENT_SALES_ORDERS = st.secrets.get('BIGQUERY', {}).get('current_sales_orders_table')
+    TABLE_ID_CURRENT_SCHEDULE = st.secrets.get('BIGQUERY', {}).get('current_schedule_table')
 
 # Configuración de BigQuery
 try:
-    #client = bigquery.Client.from_service_account_json(CREDENTIALS_PATH, location="europe-southwest1")
     client = get_bigquery_client()
     if client:
         # Verificar que las tablas existen
-        try:
-            # Verificar final_sales_orders_schedule
-            query = f"""
-            SELECT table_name 
-            FROM `{PROJECT_ID}.{DATASET_ID}.INFORMATION_SCHEMA.TABLES` 
-            WHERE table_name = '{TABLE_NAME_CURRENT_SCHEDULE}'
-            """
+        try: 
+            # Cargar el cronograma actual desde final_sales_orders_schedule
+            query = f'SELECT * FROM `{TABLE_ID_CURRENT_SCHEDULE}`'
             query_job = client.query(query)
-            results = list(query_job.result())
-            
-            if not results:
-                print(f"No existe la tabla: {results}")
-                st.warning(error_msg)
-                # Inicializar df_expanded como DataFrame vacío
-                st.stop()
-            else:
-                # Cargar el cronograma actual desde final_sales_orders_schedule
-                query = f'SELECT * FROM `{TABLE_ID_CURRENT_SCHEDULE}`'
-                query_job = client.query(query)
-                results = query_job.result()
+            results = query_job.result()
 
-                # Convertir resultados a DataFrame
-                df = results.to_dataframe()
-                
-                if df.empty or df['fecha_inicio_prevista'].isnull().all():
-                    st.info("No hay información de la planificación todavía. Se creará contenido cuando se suba el primer archivo.")
-                    df_estandarizado = pd.DataFrame(columns = ['estado', 'cumplimiento', 'fecha_inicio_prevista', 'fecha_fin_prevista', 'fecha_entrega', 'ot_id_linea', 'numero_pedido', 'nombre_articulo', 'cantidad', 'proceso', 'subproceso', 'secuencia', 'dias_duracion', 'operario', 'fecha_actualizacion_tabla'])
-                else:
-                    # Estandarizar el DataFrame
-                    df_estandarizado = estandarizar_dataframe(df)
+            # Convertir resultados a DataFrame
+            df = results.to_dataframe()
+            
+            if df.empty or df['fecha_inicio_prevista'].isnull().all():
+                st.info("No hay información de la planificación todavía. Se creará contenido cuando se suba el primer archivo.")
+                df_estandarizado = pd.DataFrame(columns = ['estado', 'cumplimiento', 'fecha_inicio_prevista', 'fecha_fin_prevista', 'fecha_entrega', 'ot_id_linea', 'numero_pedido', 'nombre_articulo', 'cantidad', 'proceso', 'subproceso', 'secuencia', 'dias_duracion', 'operario', 'fecha_actualizacion_tabla'])
+            else:
+                # Estandarizar el DataFrame
+                df_estandarizado = estandarizar_dataframe(df)
         except Exception as e:
-            print(f"Error al verificar la tabla {TABLE_NAME_CURRENT_SCHEDULE}: {str(e)}")
+            print(f"Error al cargar el cronograma actual: {str(e)}")
             st.warning(error_msg)
             st.stop()
 
@@ -506,7 +447,7 @@ with st.sidebar:
 
                 # 2. Insertar en sales_orders_production
                 print("Insertando en sales_orders_production...")
-                insert_new_sales_orders(orders_list, CREDENTIALS_PATH, TABLE_ID_SALES_ORDERS)
+                insert_new_sales_orders(orders_list, TABLE_ID_SALES_ORDERS)
                 print("sales_orders_production insertado correctamente")
                 
                 # 3. Obtener datos de final_sales_orders_production
