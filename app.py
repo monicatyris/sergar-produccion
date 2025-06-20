@@ -21,18 +21,20 @@ import streamlit.components.v1 as components
 error_msg = "La aplicación ha fallado. Por favor, contacta con el servicio de soporte."
 
 def post_planificacion(plan: dict, pedidos):
+    print("Depurando post-planificacion:")
+    print(plan)
     # Crear DataFrame para visualización
     df = pd.DataFrame(plan, columns=[
         'fecha_inicio_prevista',  # antes 'Inicio'
-        'ot_id_linea',           # antes 'OT'
-        'orden_proceso',         # antes 'Orden_Proceso'
-        'nombre_articulo',       # antes 'Nombre'
-        'cantidad',              # antes 'Cantidad'
-        'dias_duracion',         # antes 'Duración'
-        'proceso',               # antes 'Operación'
-        'subproceso',            # antes 'Subproceso'
-        'numero_pedido',         # antes 'OT_ID'
-        'operario'               # antes 'Operario'
+        'numero_pedido',          # antes 'OT' - pero realmente es numero_pedido
+        'orden_proceso',          # antes 'Orden_Proceso'
+        'nombre_articulo',        # antes 'Nombre'
+        'cantidad',               # antes 'Cantidad'
+        'dias_duracion',          # antes 'Duración'
+        'proceso',                # antes 'Operación'
+        'subproceso',             # antes 'Subproceso'
+        'ot_id_linea',            # antes 'Numero de Pedido' - pero realmente es ot_id_linea
+        'operario'                # antes 'Operario'
     ])
     
     # Convertir días a fechas
@@ -40,7 +42,7 @@ def post_planificacion(plan: dict, pedidos):
     df['fecha_fin_prevista'] = df.apply(lambda row: row['fecha_inicio_prevista'] + timedelta(days=row['dias_duracion']), axis=1)
     
     # Añadir información de secuencia de procesos
-    df['secuencia'] = df.apply(lambda row: f"Paso {row['orden_proceso'] + 1} de {len(pedidos.get(str(row['ot_id_linea']), {}).get('procesos', []))}", axis=1)
+    df['secuencia'] = df.apply(lambda row: f"Paso {row['orden_proceso'] + 1} de {len(pedidos.get(str(row['numero_pedido']), {}).get('procesos', []))}", axis=1)
     
     # Determinar el estado de cada proceso
     def determinar_estado_planificacion(row: pd.Series) -> str:
@@ -57,7 +59,13 @@ def post_planificacion(plan: dict, pedidos):
 
     def determinar_cumplimiento(row: pd.Series) -> str:
         # Obtener la fecha de entrega original del pedido
-        fecha_entrega_original = pd.to_datetime(df_expanded[df_expanded['ot_id_linea'].astype(str) == str(row['ot_id_linea'])]['fecha_entrega'].iloc[0])
+        # Verificar que el DataFrame filtrado no esté vacío antes de usar .iloc[0]
+        df_filtrado = df_expanded[df_expanded['ot_id_linea'].astype(str) == str(row['ot_id_linea'])]
+        if df_filtrado.empty:
+            print(f"Advertencia: No se encontró ot_id_linea {row['ot_id_linea']} en df_expanded")
+            return 'Sin fecha de entrega'
+        
+        fecha_entrega_original = pd.to_datetime(df_filtrado['fecha_entrega'].iloc[0])
         fecha_limite = fecha_entrega_original
         if row['fecha_fin_prevista'] > fecha_limite:
             return 'Fuera de Plazo'
@@ -68,7 +76,15 @@ def post_planificacion(plan: dict, pedidos):
     df['cumplimiento'] = df.apply(determinar_cumplimiento, axis=1)
     
     # Añadir fecha de entrega al DataFrame
-    df['fecha_entrega'] = df['ot_id_linea'].apply(lambda x: pd.to_datetime(df_expanded[df_expanded['ot_id_linea'].astype(str) == str(x)]['fecha_entrega'].iloc[0]))
+    def obtener_fecha_entrega(ot_id_linea):
+        # Verificar que el DataFrame filtrado no esté vacío antes de usar .iloc[0]
+        df_filtrado = df_expanded[df_expanded['ot_id_linea'].astype(str) == str(ot_id_linea)]
+        if df_filtrado.empty:
+            print(f"Advertencia: No se encontró ot_id_linea {ot_id_linea} en df_expanded para fecha de entrega")
+            return pd.NaT  # Retornar Not a Time si no se encuentra
+        return pd.to_datetime(df_filtrado['fecha_entrega'].iloc[0])
+    
+    df['fecha_entrega'] = df['ot_id_linea'].apply(obtener_fecha_entrega)
     
     # Reordenar columnas para mejor visualización
     columnas_ordenadas = [
@@ -114,7 +130,7 @@ def pre_planificar_produccion(df_expanded: pd.DataFrame, fecha_actual: datetime)
             continue  # Saltar este artículo si está totalmente servido
             
         articulos_planificados += 1
-        pedido_id = str(row['ot_id_linea'])
+        pedido_id = str(row['numero_pedido'])
         
         if pedido_id not in pedidos:
             # Calcular días hasta la entrega desde la fecha base
@@ -238,17 +254,22 @@ def pre_planificar_produccion(df_expanded: pd.DataFrame, fecha_actual: datetime)
     # Obtener los números de pedido únicos de los 10 más urgentes
     pedidos_urgentes = set()
     for pedido_id, _ in pedidos_ordenados[:10]:  # Cambiado de 50 a 10
-        # Buscar el número de pedido correspondiente a este OT
-        numero_pedido = df_expanded[df_expanded['ot_id_linea'].astype(str) == str(pedido_id)]['numero_pedido'].iloc[0]
-        pedidos_urgentes.add(numero_pedido)
+        pedidos_urgentes.add(pedido_id)
 
     # Incluir todos los OTs que pertenecen a estos pedidos
     pedidos_planificacion = {}
     for pedido_id, data in pedidos.items():
-        numero_pedido = df_expanded[df_expanded['ot_id_linea'].astype(str) == str(pedido_id)]['numero_pedido'].iloc[0]
-        if numero_pedido in pedidos_urgentes:
+        if pedido_id in pedidos_urgentes:
             pedidos_planificacion[pedido_id] = data
 
+    
+    # Depuración: Ver los pedidos a planificar
+    print("\nPedidos a planificar:")
+    for pedido_id, data in pedidos_planificacion.items():
+        print(f"Pedido ID: {pedido_id}")
+        print(f"Datos: {data}")
+        print("\n")
+    
     # Ejecutar planificación
     plan, makespan, status = planificar_produccion(pedidos_planificacion)
 
@@ -277,6 +298,7 @@ def pre_planificar_produccion(df_expanded: pd.DataFrame, fecha_actual: datetime)
         st.warning(error_msg)
     
     return plan, makespan, status
+
 
 def estandarizar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -417,9 +439,9 @@ try:
                 # Convertir resultados a DataFrame
                 df = results.to_dataframe()
                 
-                if df.empty:
+                if df.empty or df['fecha_inicio_prevista'].isnull().all():
                     st.info("No hay información de la planificación todavía. Se creará contenido cuando se suba el primer archivo.")
-                    df_estandarizado = pd.DataFrame()
+                    df_estandarizado = pd.DataFrame(columns = ['estado', 'cumplimiento', 'fecha_inicio_prevista', 'fecha_fin_prevista', 'fecha_entrega', 'ot_id_linea', 'numero_pedido', 'nombre_articulo', 'cantidad', 'proceso', 'subproceso', 'secuencia', 'dias_duracion', 'operario', 'fecha_actualizacion_tabla'])
                 else:
                     # Estandarizar el DataFrame
                     df_estandarizado = estandarizar_dataframe(df)
@@ -449,6 +471,14 @@ except Exception as e:
 fecha_inicio = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 fecha_actual = fecha_inicio  # O puedes poner una fecha fija para pruebas, por ejemplo: datetime(2024, 1, 1)
 
+# Inicializar session_state para persistir el DataFrame
+if 'df_estandarizado' not in st.session_state:
+    st.session_state.df_estandarizado = df_estandarizado
+
+# Inicializar bandera para controlar el procesamiento de archivos
+if 'archivo_procesado' not in st.session_state:
+    st.session_state.archivo_procesado = False
+
 # Sidebar para entrada de datos
 with st.sidebar:
     st.image("logo-sergar.png")
@@ -456,53 +486,136 @@ with st.sidebar:
     # Opción para cargar pedidos desde Excel
     st.subheader("Cargar pedidos en Excel")
     uploaded_excel_file = st.file_uploader("Cargar archivo Excel de pedidos", type=['xlsx'])
-    if uploaded_excel_file is not None:
-        try:
-            # 1. Procesar el archivo Excel
-            print("Procesando archivo Excel...")
-            df = pd.read_excel(uploaded_excel_file, decimal=",", date_format="%d/%m/%Y")
-            orders_list = process_data(df)
-            print("Archivo Excel procesado correctamente")
+    
+    # Botón para procesar archivo (solo si hay archivo cargado y no se ha procesado)
+    if uploaded_excel_file is not None and not st.session_state.archivo_procesado:
+        if st.button("🔄 Procesar archivo Excel"):
+            try:
+                # 1. Procesar el archivo Excel
+                print("Procesando archivo Excel...")
+                df = pd.read_excel(uploaded_excel_file, decimal=",", date_format="%d/%m/%Y")
+                
+                # Depuración: Ver los valores originales
+                print("\nValores originales del Excel:")
+                print("Columnas disponibles:", df.columns.tolist())
+                print("\nPrimeras filas del Excel:")
+                print(df.head())
+                
+                orders_list = process_data(df)
+                print("Archivo Excel procesado correctamente")
 
-            # 2. Insertar en sales_orders_production
-            print("Insertando en sales_orders_production...")
-            insert_new_sales_orders(orders_list, CREDENTIALS_PATH, TABLE_ID_SALES_ORDERS)
-            print("sales_orders_production insertado correctamente")
-            
-            # 3. Obtener datos de final_sales_orders_production
-            print("Obteniendo datos de final_sales_orders_production...")
-            query = f'SELECT * FROM `{TABLE_ID_CURRENT_SALES_ORDERS}`'
-            query_job = client.query(query)
-            results = query_job.result()
-            df = results.to_dataframe()
-            print("datos de final_sales_orders_production obtenidos correctamente")
-            
-            # 4. Procesar los datos para la planificación
-            print("Procesando datos para la planificación...")
-            df = df.explode('articulos')
-            if isinstance(df['articulos'].iloc[0], str):
-                df['articulos'] = df['articulos'].apply(json.loads)
-            df_expanded = pd.json_normalize(df['articulos'])
-            df_expanded['fecha_entrega'] = df['fecha_entrega'].values
-            df_expanded['numero_pedido'] = df['numero_pedido'].values
-            print("datos procesados correctamente")
-            # Estandarizar el DataFrame
-            df_expanded = estandarizar_dataframe(df_expanded)
-            
-            print("Pre-planificación de la producción...")
-            plan, makespan, status = pre_planificar_produccion(df_expanded, fecha_actual)
-            print("Pre-planificación de la producción completada")
-            if plan:
-                print("Post-planificación de la producción...")
-                df_estandarizado = post_planificacion(plan, df_expanded)
-                print("Post-planificación de la producción completada")
-            else:
-                st.error("No se pudo encontrar una solución óptima para los pedidos actuales")
+                # 2. Insertar en sales_orders_production
+                print("Insertando en sales_orders_production...")
+                insert_new_sales_orders(orders_list, CREDENTIALS_PATH, TABLE_ID_SALES_ORDERS)
+                print("sales_orders_production insertado correctamente")
+                
+                # 3. Obtener datos de final_sales_orders_production
+                print("Obteniendo datos de final_sales_orders_production...")
+                query = f'SELECT * FROM `{TABLE_ID_CURRENT_SALES_ORDERS}`'
+                query_job = client.query(query)
+                results = query_job.result()
+                df = results.to_dataframe()
+                print("datos de final_sales_orders_production obtenidos correctamente")
+                
+                # 4. Procesar los datos para la planificación
+                print("Procesando datos para la planificación...")
+                df = df.explode('articulos')
+                if isinstance(df['articulos'].iloc[0], str):
+                    df['articulos'] = df['articulos'].apply(json.loads)
+                df_expanded = pd.json_normalize(df['articulos'])
+                
+                # Depuración: Ver los valores después de normalizar
+                print("\nValores después de normalizar:")
+                print("Columnas en df_expanded:", df_expanded.columns.tolist())
+                print("\nPrimeras filas de df_expanded:")
+                print(df_expanded.head())
+                
+                df_expanded['fecha_entrega'] = df['fecha_entrega'].values
+                df_expanded['numero_pedido'] = df['numero_pedido'].values
+                
+                # Depuración: Ver los valores después de asignar numero_pedido
+                print("\nValores después de asignar numero_pedido:")
+                print(df_expanded.head())
+                
+                print("datos procesados correctamente")
+                # Estandarizar el DataFrame
+                df_expanded = estandarizar_dataframe(df_expanded)
+
+                # Depuración: Ver los valores después de estandarizar
+                print("\nValores después de estandarizar:")
+                print(df_expanded.head())
+                
+                print("Pre-planificación de la producción...")
+                plan, makespan, status = pre_planificar_produccion(df_expanded, fecha_actual)
+                print("Pre-planificación de la producción completada")
+                if plan:
+                    print("Post-planificación de la producción...")
+
+                    # Depuración: Ver los valores después de post-planificación
+                    print("\nValores después de post-planificación:")
+                    # guardar el df_expanded en un archivo csv
+                    df_expanded.to_csv('df_expanded.csv', index=False)
+
+                    df_estandarizado = post_planificacion(plan, df_expanded)
+                    print("Post-planificación de la producción completada")
+
+                    # Depuración: Ver los valores después de post-planificación
+                    print("\nValores después de post-planificación:")
+                    print(df_estandarizado.head())
+                    # guardar el df_estandarizado en un archivo csv
+                    df_estandarizado.to_csv('df_estandarizado_post_planificacion.csv', index=False)
+
+                    # ACTUALIZAR EL DATAFRAME EN SESSION_STATE PARA QUE LOS FILTROS TRABAJEN CON LOS DATOS MÁS RECIENTES
+                    print("Actualizando DataFrame en session_state con los datos más recientes...")
+                    st.session_state.df_estandarizado = df_estandarizado.copy()
+                    
+                    # RECARGAR DATOS DESDE TABLE_ID_CURRENT_SCHEDULE PARA ASEGURAR QUE LOS FILTROS TRABAJEN CON LOS DATOS ACTUALIZADOS
+                    print("Recargando datos desde TABLE_ID_CURRENT_SCHEDULE...")
+                    try:
+                        # Cargar el cronograma actualizado desde final_sales_orders_schedule
+                        query = f'SELECT * FROM `{TABLE_ID_CURRENT_SCHEDULE}`'
+                        query_job = client.query(query)
+                        results = query_job.result()
+
+                        # Convertir resultados a DataFrame
+                        df_actualizado = results.to_dataframe()
+                        
+                        if not df_actualizado.empty:
+                            # Estandarizar el DataFrame actualizado
+                            df_actualizado_estandarizado = estandarizar_dataframe(df_actualizado)
+                            # Actualizar session_state con los datos más recientes de BigQuery
+                            st.session_state.df_estandarizado = df_actualizado_estandarizado
+                            print("Datos recargados correctamente desde BigQuery")
+                        else:
+                            print("No se encontraron datos en TABLE_ID_CURRENT_SCHEDULE")
+                            
+                    except Exception as e:
+                        print(f"Error al recargar datos desde BigQuery: {str(e)}")
+                        # Si falla la recarga, mantener los datos locales
+                        print("Manteniendo datos locales como respaldo")
+
+                    # Marcar archivo como procesado
+                    st.session_state.archivo_procesado = True
+                    st.success("¡Archivo procesado correctamente!")
+                    st.rerun()
+
+                else:
+                    st.error("No se pudo encontrar una solución óptima para los pedidos actuales")
+                    st.warning(error_msg)
+            except Exception as e:
+                print(f"Error al cargar el archivo Excel: {str(e)}")
+                st.error("Error al cargar el archivo Excel")
                 st.warning(error_msg)
-        except Exception as e:
-            print(f"Error al cargar el archivo Excel: {str(e)}")
-            st.error("Error al cargar el archivo Excel")
-            st.warning(error_msg)
+    
+    # Mostrar estado del archivo
+    if uploaded_excel_file is not None:
+        if st.session_state.archivo_procesado:
+            st.success("✅ Archivo procesado")
+            if st.button("🔄 Procesar nuevo archivo"):
+                st.session_state.archivo_procesado = False
+                st.rerun()
+        else:
+            st.info("📁 Archivo cargado - Haz clic en 'Procesar archivo Excel'")
 
     # Filtros en la sidebar
     st.subheader("Filtrar")
@@ -514,8 +627,8 @@ with st.sidebar:
                 st.session_state[key] = []
         st.rerun()
     
-    # Inicializar df_filtrado con el DataFrame original
-    df_filtrado = df_estandarizado.copy()
+    # Usar el DataFrame de session_state para los filtros
+    df_filtrado = st.session_state.df_estandarizado.copy()
     
     # Selector de rango de fechas
     st.subheader("📅 Rango de fechas")
@@ -544,20 +657,20 @@ with st.sidebar:
             # Filtrar procesos que se realizan dentro del rango seleccionado
             mascara_fechas = (
                 # El proceso comienza dentro del rango
-                ((df_filtrado['fecha_inicio_prevista'].dt.date >= fecha_actual) & 
-                 (df_filtrado['fecha_inicio_prevista'].dt.date <= fecha_limite)) |
+                ((df_filtrado['fecha_inicio_prevista'] >= fecha_actual) & 
+                 (df_filtrado['fecha_inicio_prevista'] <= fecha_limite)) |
                 # O el proceso termina dentro del rango
-                ((df_filtrado['fecha_fin_prevista'].dt.date >= fecha_actual) & 
-                 (df_filtrado['fecha_fin_prevista'].dt.date <= fecha_limite)) |
+                ((df_filtrado['fecha_fin_prevista'] >= fecha_actual) & 
+                 (df_filtrado['fecha_fin_prevista'] <= fecha_limite)) |
                 # O el proceso abarca todo el rango
-                ((df_filtrado['fecha_inicio_prevista'].dt.date <= fecha_actual) & 
-                 (df_filtrado['fecha_fin_prevista'].dt.date >= fecha_limite)) |
+                ((df_filtrado['fecha_inicio_prevista'] <= fecha_actual) & 
+                 (df_filtrado['fecha_fin_prevista'] >= fecha_limite)) |
                 # O el proceso ya comenzó pero aún no ha terminado
-                ((df_filtrado['fecha_inicio_prevista'].dt.date <= fecha_actual) & 
-                 (df_filtrado['fecha_fin_prevista'].dt.date >= fecha_actual)) |
+                ((df_filtrado['fecha_inicio_prevista'] <= fecha_actual) & 
+                 (df_filtrado['fecha_fin_prevista'] >= fecha_actual)) |
                 # O el proceso ya terminó pero fue en los últimos 7 días
-                ((df_filtrado['fecha_fin_prevista'].dt.date >= fecha_actual - timedelta(days=dias)) & 
-                 (df_filtrado['fecha_fin_prevista'].dt.date <= fecha_actual))
+                ((df_filtrado['fecha_fin_prevista'] >= fecha_actual - timedelta(days=dias)) & 
+                 (df_filtrado['fecha_fin_prevista'] <= fecha_actual))
             )
             df_filtrado = df_filtrado[mascara_fechas]
         else:
@@ -696,7 +809,7 @@ for recurso in recursos_unicos:
     # Buscar el color correspondiente o usar un color por defecto
     colores_actuales[recurso] = colores_procesos.get(proceso_base, '#808080')  # Gris por defecto
 
-# Crear figura de Gantt con Plotly
+
 if mostrar_gantt:
     st.markdown("### Cronograma de producción")
     
