@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import pandas as pd
 
 # Mapeo de procesos IT a nombres legibles
 MAPEO_PROCESOS = {
@@ -63,6 +64,19 @@ COSTES_PROCESOS = {
     'Barniz': 1.1,      # 10% más costoso que dibujo
     'Embalaje': 0.8     # 20% menos costoso que dibujo
 }
+
+# Determinar el estado de cada proceso
+def determinar_estado_planificacion(row: pd.Series, fecha_actual: datetime, df: pd.DataFrame) -> str:
+    if row['Fecha Fin Prevista'] < fecha_actual:
+        return 'Planificado Finalizado'
+    elif row['Fecha Inicio Prevista'] <= fecha_actual <= row['Fecha Fin Prevista']:
+        return 'Activado'
+    elif row['Orden_Proceso'] == 0 or all(
+        (df[(df['OT'] == row['OT']) & (df['Orden_Proceso'] < row['Orden_Proceso'])]['Fecha Inicio Prevista'] <= fecha_actual)
+    ):
+        return 'Listo para Activar'
+    else:
+        return 'Pendiente'
 
 def procesar_nombre_proceso(nombre: str) -> tuple[str, str]:
     """

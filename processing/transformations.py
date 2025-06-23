@@ -69,7 +69,7 @@ def process_data(df: pd.DataFrame) -> list:
             'cliente': _convert_to_native_types(x.name[1]),
             'fecha_pedido': _convert_to_native_types(x.name[2]),
             'fecha_entrega': _convert_to_native_types(x.name[3]),
-            'fecha_actualizacion_tabla': pd.NaT,
+            'fecha_actualizacion_tabla': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
             'articulos': [
                 {
                 'nombre': _convert_to_native_types(row['Articulo']),
