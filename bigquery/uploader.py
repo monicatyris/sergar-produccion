@@ -1,10 +1,37 @@
-import re
-from datetime import datetime
-
 import pandas as pd
 from google.cloud import bigquery
 
 from .client import get_bigquery_client
+
+def delete_duplicates(table_id_sales_orders_production: str):
+    query = f""" 
+        DELETE FROM {table_id_sales_orders_production} AS target
+        WHERE EXIST (
+            SELECT 1
+            FROM (
+                SELECT
+                numero_pedido,
+                fecha_actualizacion_tabla,
+                ROW_NUMBER() OVER (PARTITION BY numero_pedido ORDER BY DESC) as rn
+                FROM {table_id_sales_orders_production}
+            ) as row_data
+            WHERE row_data.numero_pedido = target.numero_pedido
+                AND row_data.fecha_actualizacion_tabla = target.fecha_actualizacion_tabla
+                AND rn > 1
+        )
+    """
+
+    try:
+       # Get singleton client
+        client = get_bigquery_client()
+        if client is None:
+            raise Exception("No se pudo obtener el cliente de BigQuery") 
+        
+        query_job = client.query(query)
+        query_job.result()
+    except Exception as e:
+        print(f"Error deleting duplicates if exists sales orders: {str(e)}")
+        raise
 
 
 def insert_new_sales_orders(orders: list, table_id_sales_orders_production: str):
@@ -39,6 +66,9 @@ def insert_new_sales_orders(orders: list, table_id_sales_orders_production: str)
         )
 
         job.result()
+
+        # Delete duplicates
+        delete_duplicates(table_id_sales_orders_production)
     
     except Exception as e:
         print(f"Error inserting new sales orders: {str(e)}")
