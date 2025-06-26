@@ -426,7 +426,7 @@ with st.sidebar:
 
     # Opción para cargar pedidos desde Excel
     st.subheader("Cargar pedidos en Excel")
-    uploaded_excel_file = st.file_uploader("Cargar archivo Excel de pedidos", type=['xlsx'])
+    uploaded_excel_file = st.file_uploader("Cargar archivo Excel de pedidos", type=['xlsx', 'xls'])
     
     # Botón para procesar archivo (solo si hay archivo cargado y no se ha procesado)
     if uploaded_excel_file is not None and not st.session_state.archivo_procesado:
@@ -434,7 +434,27 @@ with st.sidebar:
             try:
                 # 1. Procesar el archivo Excel
                 print("Procesando archivo Excel...")
-                df = pd.read_excel(uploaded_excel_file, decimal=",", date_format="%d/%m/%Y")
+                try:
+                    # Detectar el tipo de archivo
+                    file_extension = uploaded_excel_file.name.lower()
+                    if file_extension.endswith('.xls'):
+                        # Para archivos .xls, usar engine='xlrd'
+                        df = pd.read_excel(uploaded_excel_file, engine='xlrd', decimal=",", date_format="%d/%m/%Y")
+                    else:
+                        # Para archivos .xlsx, usar engine por defecto (openpyxl)
+                        df = pd.read_excel(uploaded_excel_file, decimal=",", date_format="%d/%m/%Y")
+                except Exception as e:
+                    print(f"Error al leer el archivo Excel: {str(e)}")
+                    st.info("""
+                    **Posibles soluciones:**
+                    1. Verifica que el archivo no esté corrupto
+                    2. Asegúrate de que el formato de fechas sea DD/MM/YYYY
+                    3. Para archivos .xls antiguos, considera convertirlos a .xlsx
+                    4. Verifica que el archivo no esté abierto en Excel
+                    5. Asegúrate de que las columnas requeridas estén presentes
+                    """)
+                    st.warning(error_msg)
+                    raise Exception(f"Error al leer el archivo Excel: {str(e)}")
                 
                 # Depuración: Ver los valores originales
                 print("\nValores originales del Excel:")
