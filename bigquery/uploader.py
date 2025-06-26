@@ -3,21 +3,22 @@ from google.cloud import bigquery
 
 from .client import get_bigquery_client
 
+
 def delete_duplicates(table_id_sales_orders_production: str):
     query = f""" 
         DELETE FROM {table_id_sales_orders_production} AS target
-        WHERE EXIST (
+        WHERE EXISTS (
             SELECT 1
             FROM (
                 SELECT
                 numero_pedido,
                 fecha_actualizacion_tabla,
-                ROW_NUMBER() OVER (PARTITION BY numero_pedido ORDER BY DESC) as rn
+                ROW_NUMBER() OVER (PARTITION BY numero_pedido ORDER BY fecha_actualizacion_tabla DESC) as rn
                 FROM {table_id_sales_orders_production}
             ) as row_data
             WHERE row_data.numero_pedido = target.numero_pedido
                 AND row_data.fecha_actualizacion_tabla = target.fecha_actualizacion_tabla
-                AND rn > 1
+                AND row_data.rn > 1
         )
     """
 
