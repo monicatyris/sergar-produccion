@@ -125,6 +125,7 @@ def pre_planificar_produccion(df_expanded: pd.DataFrame, fecha_actual: datetime)
     total_articulos = 0
     articulos_servidos = 0
     articulos_planificados = 0
+    articulos_filtrados_otros = 0
 
     for _, row in df_expanded.iterrows():
         total_articulos += 1
@@ -133,6 +134,17 @@ def pre_planificar_produccion(df_expanded: pd.DataFrame, fecha_actual: datetime)
         if row.get('servido') == 'Totalmente servido':
             articulos_servidos += 1
             continue  # Saltar este artículo si está totalmente servido
+        
+        # Verificar si tiene procesos IT "En espera"
+        tiene_procesos_en_espera = False
+        for key, value in row.items():
+            if key.startswith('IT') and pd.notna(value) and value == "En espera":
+                tiene_procesos_en_espera = True
+                break
+        
+        if not tiene_procesos_en_espera:
+            articulos_filtrados_otros += 1
+            continue  # Saltar si no tiene procesos en espera
             
         articulos_planificados += 1
         pedido_id = str(row['numero_pedido'])
@@ -142,10 +154,15 @@ def pre_planificar_produccion(df_expanded: pd.DataFrame, fecha_actual: datetime)
             fecha_entrega = pd.to_datetime(row['fecha_entrega'])
             dias_hasta_entrega = (fecha_entrega - fecha_inicio).days
             
-            # Asegurar que la fecha sea positiva y tenga un mínimo de días para planificar
-            dias_minimos_planificacion = 365  # Mínimo de días para planificar cualquier pedido
+            # Asegurar que la fecha sea positiva y tenga un mínimo razonable
+            dias_minimos_planificacion = 30  # Mínimo de 30 días para planificar cualquier pedido
             if dias_hasta_entrega < dias_minimos_planificacion:
                 dias_hasta_entrega = dias_minimos_planificacion
+            
+            # Limitar el máximo a un valor razonable
+            dias_maximos_planificacion = 365  # Máximo de 365 días para planificar
+            if dias_hasta_entrega > dias_maximos_planificacion:
+                dias_hasta_entrega = dias_maximos_planificacion
             
             pedidos[pedido_id] = {
                 "nombre": row['nombre'],
@@ -202,37 +219,39 @@ def pre_planificar_produccion(df_expanded: pd.DataFrame, fecha_actual: datetime)
                     
                     # Duración base por unidad según el proceso (en días)
                     duraciones_base = {
-                        'Dibujo': 0.03648,      # 3.648 días para 100 unidades
-                        'Impresión': 0.07296,   # 7.296 días para 100 unidades (Digital + Serigrafía)
-                        'Taladro': 0.01824,     # 1.824 días para 100 unidades
-                        'Corte': 0.01824,       # 1.824 días para 100 unidades
-                        'Canteado': 0.01824,    # 1.824 días para 100 unidades
-                        'Embalaje': 0.01824,    # 1.824 días para 100 unidades
-                        'Pantalla': 0.03648,    # Similar a Dibujo
-                        'Grabado': 0.03648,     # Similar a Dibujo
-                        'Adhesivo': 0.01824,    # Similar a Corte
-                        'Laminado': 0.01824,    # Similar a Corte
-                        'Mecanizado': 0.01824,  # Similar a Taladro
-                        'Numerado': 0.01824,    # Similar a Embalaje
-                        'Serigrafía': 0.03648,  # Parte de Impresión
-                        'Digital': 0.03648,     # Parte de Impresión
-                        'Láser': 0.01824,       # Similar a Corte
-                        'Fresado': 0.01824,     # Similar a Taladro
-                        'Plotter': 0.01824,     # Similar a Corte
-                        'Burbuja teclas': 0.01824,  # Similar a Taladro
-                        'Hendido': 0.01824,     # Similar a Corte
-                        'Plegado': 0.01824,     # Similar a Corte
-                        'Semicorte': 0.01824    # Similar a Corte
+                        'Dibujo': 0.0003648,    # 0.03648 días para 100 unidades (reducido)
+                        'Impresión': 0.0007296, # 0.07296 días para 100 unidades (reducido)
+                        'Taladro': 0.0001824,   # 0.01824 días para 100 unidades (reducido)
+                        'Corte': 0.0001824,     # 0.01824 días para 100 unidades (reducido)
+                        'Canteado': 0.0001824,  # 0.01824 días para 100 unidades (reducido)
+                        'Embalaje': 0.0001824,  # 0.01824 días para 100 unidades (reducido)
+                        'Pantalla': 0.0003648,  # Similar a Dibujo (reducido)
+                        'Grabado': 0.0003648,   # Similar a Dibujo (reducido)
+                        'Adhesivo': 0.0001824,  # Similar a Corte (reducido)
+                        'Laminado': 0.0001824,  # Similar a Corte (reducido)
+                        'Mecanizado': 0.0001824, # Similar a Taladro (reducido)
+                        'Numerado': 0.0001824,  # Similar a Embalaje (reducido)
+                        'Serigrafía': 0.0003648, # Parte de Impresión (reducido)
+                        'Digital': 0.0003648,   # Parte de Impresión (reducido)
+                        'Láser': 0.0001824,     # Similar a Corte (reducido)
+                        'Fresado': 0.0001824,   # Similar a Taladro (reducido)
+                        'Plotter': 0.0001824,   # Similar a Corte (reducido)
+                        'Burbuja teclas': 0.0001824, # Similar a Taladro (reducido)
+                        'Hendido': 0.0001824,   # Similar a Corte (reducido)
+                        'Plegado': 0.0001824,   # Similar a Corte (reducido)
+                        'Semicorte': 0.0001824  # Similar a Corte (reducido)
                     }
                     
                     # Obtener la duración base para el proceso
-                    duracion_base = duraciones_base.get(proceso_base, 0.03648)  # Por defecto, usar el tiempo de dibujo
+                    duracion_base = duraciones_base.get(proceso_base, 0.0003648)  # Por defecto, usar el tiempo de dibujo
                     
                     # Calcular duración total
                     duracion = round(cantidad * duracion_base, 3)
                     
-                    # Asegurar una duración mínima de 0.5 días (4 horas)
-                    duracion = max(duracion, 0.5)
+                    # Aplicar límites razonables para evitar duraciones imposibles
+                    duracion_minima = 0.05  # Mínimo 0.05 días (1.2 horas)
+                    duracion_maxima = 30   # Máximo 30 días por proceso
+                    duracion = max(duracion_minima, min(duracion, duracion_maxima))
                     
                     operario = "Por Asignar"
                     
@@ -253,56 +272,95 @@ def pre_planificar_produccion(df_expanded: pd.DataFrame, fecha_actual: datetime)
         # Ordenar los procesos según la secuencia predefinida
         pedidos[pedido_id]["procesos"].sort(key=lambda x: SECUENCIA_PROCESOS.get(x[0], 999))
 
-    # Ordenar pedidos por fecha de entrega y seleccionar los 10 más urgentes
+    # Ordenar pedidos por fecha de entrega
     pedidos_ordenados = sorted(pedidos.items(), key=lambda x: x[1]['fecha_entrega'])
-
-    # Obtener los números de pedido únicos de los 10 más urgentes
-    pedidos_urgentes = set()
-    for pedido_id, _ in pedidos_ordenados[:10]:  # Cambiado de 50 a 10
-        pedidos_urgentes.add(pedido_id)
-
-    # Incluir todos los OTs que pertenecen a estos pedidos
-    pedidos_planificacion = {}
-    for pedido_id, data in pedidos.items():
-        if pedido_id in pedidos_urgentes:
-            pedidos_planificacion[pedido_id] = data
-
     
-    # Depuración: Ver los pedidos a planificar
-    print("\nPedidos a planificar:")
-    for pedido_id, data in pedidos_planificacion.items():
-        print(f"Pedido ID: {pedido_id}")
-        print(f"Datos: {data}")
-        print("\n")
+    if len(pedidos_ordenados) == 0:
+        st.error("No hay pedidos para planificar. Todos los artículos están servidos o no tienen procesos en espera.")
+        return [], 0, cp_model.INFEASIBLE
     
-    # Ejecutar planificación
-    plan, makespan, status = planificar_produccion(pedidos_planificacion)
-
-    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-        st.success("Se encontró una solución óptima para los 10 pedidos más urgentes")
-    elif status == cp_model.INFEASIBLE:
-        st.error("No se encontró una solución factible para los 10 pedidos más urgentes")
+    # Implementar planificación por lotes
+    TAMANO_LOTE = 20  # Planificar 20 pedidos a la vez (aumentado de 10)
+    plan_completo = []
+    makespan_total = 0
+    status_final = cp_model.OPTIMAL
+    
+    st.info(f"Planificando {len(pedidos_ordenados)} pedidos en lotes de {TAMANO_LOTE}...")
+    
+    # Crear barra de progreso
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    # Mostrar información inicial en la barra de progreso
+    status_text.text(f"Iniciando planificación de {len(pedidos_ordenados)} pedidos...")
+    
+    for i in range(0, len(pedidos_ordenados), TAMANO_LOTE):
+        lote_actual = pedidos_ordenados[i:i + TAMANO_LOTE]
+        pedidos_lote = dict(lote_actual)
+        
+        # Actualizar progreso
+        progreso = min((i + TAMANO_LOTE) / len(pedidos_ordenados), 1.0)
+        progress_bar.progress(progreso)
+        status_text.text(f"Planificando lote {i//TAMANO_LOTE + 1}/{(len(pedidos_ordenados) + TAMANO_LOTE - 1)//TAMANO_LOTE} ({len(pedidos_lote)} pedidos)")
+        
+        # Ejecutar planificación para este lote
+        try:
+            plan_lote, makespan_lote, status_lote = planificar_produccion(pedidos_lote)
+            
+            if status_lote == cp_model.OPTIMAL or status_lote == cp_model.FEASIBLE:
+                # Ajustar las fechas de inicio del lote actual basándose en el makespan del lote anterior
+                if plan_lote:
+                    for j, item in enumerate(plan_lote):
+                        # Añadir el offset del lote anterior
+                        nueva_fecha_inicio = item[0] + makespan_total
+                        plan_completo.append((
+                            nueva_fecha_inicio,
+                            item[1],  # pedido
+                            item[2],  # orden_proceso
+                            item[3],  # nombre
+                            item[4],  # cantidad
+                            item[5],  # duracion
+                            item[6],  # proceso
+                            item[7],  # subproceso
+                            item[8],  # ot
+                            item[9]   # operario
+                        ))
+                    
+                    makespan_total += makespan_lote
+                else:
+                    status_final = cp_model.INFEASIBLE
+                    break
+            else:
+                status_final = status_lote
+                break
+                
+        except Exception as e:
+            print(f"EXCEPCIÓN en lote {i//TAMANO_LOTE + 1}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            status_final = cp_model.MODEL_INVALID
+            break
+    
+    # Limpiar elementos de progreso
+    progress_bar.empty()
+    status_text.empty()
+    
+    if status_final == cp_model.OPTIMAL or status_final == cp_model.FEASIBLE:
+        st.success(f"✅ Planificación completada para {len(pedidos_ordenados)} pedidos en {len(plan_completo)} operaciones")
+    elif status_final == cp_model.INFEASIBLE:
+        st.error("❌ No se pudo encontrar una solución factible para todos los pedidos")
         st.info("""
-        Posibles razones:
-        1. Las fechas de entrega son demasiado cercanas
-        2. La duración de los procesos es mayor que el tiempo disponible
-        3. Hay conflictos en la secuencia de procesos
-        """)
-        st.warning(error_msg)
-    elif status == cp_model.MODEL_INVALID:
-        st.error("El modelo es inválido para los 10 pedidos más urgentes")
-        st.info("""
-        Posibles razones:
-        1. Variables no definidas correctamente
-        2. Restricciones contradictorias
-        3. Valores de entrada inválidos
+        **Posibles soluciones:**
+        1. Reducir el número de pedidos a planificar
+        2. Revisar las fechas de entrega
+        3. Verificar que no hay conflictos en la secuencia de procesos
         """)
         st.warning(error_msg)
     else:
-        print(f"Estado desconocido: {status}")
+        st.error(f"❌ Error en la planificación: {status_final}")
         st.warning(error_msg)
     
-    return plan, makespan, status
+    return plan_completo, makespan_total, status_final
 
 
 def estandarizar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
